@@ -2,16 +2,10 @@
 //!
 //! See https://man7.org/linux/man-pages/man5/elf.5.html
 
-pub mod consts;
-use consts as c;
+use crate::consts as c;
+use bstr::BStr;
 
-use std::{
-    ffi::CStr,
-    fmt::Debug,
-    mem,
-    ops::{self},
-    slice::SliceIndex,
-};
+use std::{fmt::Debug, mem, ops, slice::SliceIndex, string};
 
 use bytemuck::{Pod, PodCastError, Zeroable};
 
@@ -32,11 +26,15 @@ impl Offset {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Zeroable, Pod)]
 #[repr(transparent)]
-pub struct Section(pub u16);
+pub struct ShStringIdx(pub u32);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Zeroable, Pod)]
 #[repr(transparent)]
-pub struct Versym(pub u16);
+pub struct StringIdx(pub u32);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Zeroable, Pod)]
+#[repr(transparent)]
+pub struct SymIdx(pub u32);
 
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum ElfParseError {
@@ -58,6 +56,8 @@ pub enum ElfParseError {
     NoStringNulTerm(usize),
     #[error("The SHT_SYMTAB section was not found")]
     SymtabNotFound,
+    #[error("The section with the name {0:?} was not found")]
+    SectionNotFound(std::result::Result<string::String, Vec<u8>>),
 }
 
 type Result<T> = std::result::Result<T, ElfParseError>;
@@ -84,7 +84,7 @@ pub struct ElfHeader {
     pub phnum: u16,
     pub shentsize: u16,
     pub shnum: u16,
-    pub shstrndex: u16,
+    pub shstrndex: c::SectionIdx,
 }
 
 #[derive(Debug, Clone, Copy, Zeroable, Pod)]
@@ -117,7 +117,7 @@ pub struct Phdr {
 #[derive(Debug, Clone, Copy, Zeroable, Pod)]
 #[repr(C)]
 pub struct Shdr {
-    pub name: u32,
+    pub name: ShStringIdx,
     pub r#type: c::ShType,
     pub flags: u64,
     pub addr: Addr,
@@ -132,12 +132,32 @@ pub struct Shdr {
 #[derive(Debug, Clone, Copy, Zeroable, Pod)]
 #[repr(C)]
 pub struct Sym {
-    pub name: u32,
-    pub info: u8,
-    pub other: u8,
-    pub shndx: u16,
+    pub name: StringIdx,
+    pub info: SymInfo,
+    pub other: c::SymbolVisibility,
+    pub shndx: c::SectionIdx,
     pub value: Addr,
     pub size: u64,
+}
+
+#[derive(Clone, Copy, Zeroable, Pod)]
+#[repr(transparent)]
+pub struct SymInfo(pub u8);
+
+impl SymInfo {
+    pub fn r#type(self) -> c::SymbolType {
+        c::SymbolType(self.0 & 0xf)
+    }
+
+    pub fn binding(self) -> c::SymbolBinding {
+        c::SymbolBinding(self.0 >> 4)
+    }
+}
+
+impl Debug for SymInfo {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?},{:?}", self.r#type(), self.binding())
+    }
 }
 
 #[derive(Debug, Clone, Copy, Zeroable, Pod)]
@@ -157,11 +177,11 @@ pub struct Rela {
 
 #[derive(Clone, Copy, Zeroable, Pod)]
 #[repr(transparent)]
-pub struct RelInfo(u64);
+pub struct RelInfo(pub u64);
 
 impl RelInfo {
-    pub fn sym(&self) -> u32 {
-        (self.0 >> 32) as u32
+    pub fn sym(&self) -> SymIdx {
+        SymIdx((self.0 >> 32) as u32)
     }
 
     pub fn r#type(&self) -> u32 {
@@ -171,7 +191,7 @@ impl RelInfo {
 
 impl Debug for RelInfo {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?} @ {}", c::RX86_64(self.r#type()), self.sym())
+        write!(f, "{:?} @ {}", c::RX86_64(self.r#type()), self.sym().0)
     }
 }
 
@@ -210,7 +230,7 @@ impl<'a> Elf<'a> {
 
         let off = header.phoff.usize();
         load_slice(
-            &self.data.get_elf(off.., "program header offset")?,
+            self.data.get_elf(off.., "program header offset")?,
             header.phnum.into(),
         )
     }
@@ -232,14 +252,27 @@ impl<'a> Elf<'a> {
         }
         let off = header.shoff.usize();
         load_slice(
-            &self.data.get_elf(off.., "sectoin header offset")?,
+            self.data.get_elf(off.., "sectoin header offset")?,
             header.shnum.into(),
         )
     }
 
-    pub fn section_header(&self, idx: usize) -> Result<&Shdr> {
+    pub fn section_header(&self, idx: c::SectionIdx) -> Result<&Shdr> {
         let sections = self.section_headers()?;
-        sections.get_elf(idx, "section number")
+        sections.get_elf(idx.usize(), "section number")
+    }
+
+    pub fn section_header_by_name(&self, name: &[u8]) -> Result<&Shdr> {
+        let sections = self.section_headers()?;
+        for sh in sections {
+            if self.sh_string(sh.name)? == name {
+                return Ok(sh);
+            }
+        }
+        let name = name.to_vec();
+        Err(ElfParseError::SectionNotFound(
+            string::String::from_utf8(name).map_err(|err| err.into_bytes()),
+        ))
     }
 
     pub fn section_content(&self, sh: &Shdr) -> Result<&[u8]> {
@@ -247,13 +280,12 @@ impl<'a> Elf<'a> {
             return Ok(&[]);
         }
 
-        Ok(&self
-            .data
+        self.data
             .get_elf(sh.offset.usize().., "section offset")?
-            .get_elf(..(sh.size as usize), "section size")?)
+            .get_elf(..(sh.size as usize), "section size")
     }
 
-    pub fn str_table(&self) -> Result<&[u8]> {
+    pub fn sh_str_table(&self) -> Result<&[u8]> {
         let header = self.header()?;
         let shstrndex = header.shstrndex;
 
@@ -271,18 +303,35 @@ impl<'a> Elf<'a> {
             )
         }
 
-        let strtab_header = self.section_header(shstrndex as usize)?;
+        let strtab_header = self.section_header(shstrndex)?;
         self.section_content(strtab_header)
     }
 
-    pub fn string(&self, idx: usize) -> Result<&CStr> {
+    pub fn str_table(&self) -> Result<&[u8]> {
+        let sh = self.section_header_by_name(b".strtab")?;
+        self.section_content(sh)
+    }
+
+    pub fn sh_string(&self, idx: ShStringIdx) -> Result<&BStr> {
+        let idx = idx.0 as usize;
+        let str_table = self.sh_str_table()?;
+        let indexed = str_table.get_elf(idx.., "string offset")?;
+        let end = indexed
+            .iter()
+            .position(|&c| c == b'\0')
+            .ok_or(ElfParseError::NoStringNulTerm(idx))?;
+        Ok(BStr::new(&indexed[..end]))
+    }
+
+    pub fn string(&self, idx: StringIdx) -> Result<&BStr> {
+        let idx = idx.0 as usize;
         let str_table = self.str_table()?;
         let indexed = str_table.get_elf(idx.., "string offset")?;
         let end = indexed
             .iter()
             .position(|&c| c == b'\0')
             .ok_or(ElfParseError::NoStringNulTerm(idx))?;
-        Ok(CStr::from_bytes_with_nul(&indexed[..=end]).unwrap())
+        Ok(BStr::new(&indexed[..end]))
     }
 
     pub fn relas(&self) -> Result<impl Iterator<Item = (&Shdr, &Rela)>> {
@@ -310,6 +359,11 @@ impl<'a> Elf<'a> {
         let data = self.section_content(sh)?;
 
         load_slice(data, data.len() / mem::size_of::<Sym>())
+    }
+
+    pub fn symbol(&self, idx: SymIdx) -> Result<&Sym> {
+        let idx = idx.0 as usize;
+        self.symbols()?.get_elf(idx, "symbol index")
     }
 }
 
@@ -417,7 +471,7 @@ mod tests {
         elf.section_headers()?;
 
         for section in elf.section_headers()? {
-            let name = elf.string(section.name as usize)?.to_str().unwrap();
+            let name = elf.sh_string(section.name)?.to_string();
             println!("{name:20} {:5} {:?}", section.size, section.r#type);
         }
 
@@ -439,17 +493,30 @@ mod tests {
         elf.program_headers()?;
         elf.section_headers()?;
 
+        println!("Sections:\n");
+
         for sh in elf.section_headers()? {
-            let name = elf.string(sh.name as usize)?.to_str().unwrap();
+            let name = elf.sh_string(sh.name)?.to_string();
             println!("{name:20} {:5} {:?}", sh.size, sh.r#type);
         }
 
-        println!("Relocations:");
+        println!("Relocations:\n");
 
+        println!("{:20} {:10} {}", "Section", "Symbol", "Relocation");
+
+        let mut has_puts = false;
         for (sh, rela) in elf.relas()? {
-            let section_name = elf.string(sh.name as usize)?.to_str().unwrap();
-            println!("{section_name:20} {:?}", rela);
+            let section_name = elf.sh_string(sh.name)?.to_string();
+            let sym = elf.symbol(rela.info.sym())?;
+            let sym_name = elf.string(sym.name)?.to_string();
+            println!("{section_name:20} {sym_name:10} {rela:?}");
+
+            if sym_name == "puts" {
+                has_puts = true;
+            }
         }
+
+        assert!(has_puts, "puts symbol not found");
 
         Ok(())
     }

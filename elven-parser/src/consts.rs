@@ -22,7 +22,7 @@ macro_rules! const_group_with_fmt {
                     $(
                         $value => f.write_str(stringify!($name)),
                     )*
-                    a => write!(f, "Other {}: {a}", $group_name,)
+                    a => write!(f, "{}({a})", $group_name)
                 }
             }
         }
@@ -30,6 +30,24 @@ macro_rules! const_group_with_fmt {
         impl PartialEq<$ty> for $struct_name {
             fn eq(&self, other: &$ty) -> bool {
                 self.0 == *other
+            }
+        }
+
+        impl PartialEq<$struct_name> for $ty {
+            fn eq(&self, other: &$struct_name) -> bool {
+               *self == other.0
+            }
+        }
+
+        impl PartialOrd<$ty> for $struct_name {
+            fn partial_cmp(&self, other: &$ty) -> Option<std::cmp::Ordering> {
+                self.0.partial_cmp(other)
+            }
+        }
+
+        impl PartialOrd<$struct_name> for $ty {
+            fn partial_cmp(&self, other: &$struct_name) -> Option<std::cmp::Ordering> {
+                self.partial_cmp(&other.0)
             }
         }
     };
@@ -45,7 +63,7 @@ pub const SELFMAG: usize = 4;
 
 pub const EI_CLASS: usize = 4; /* File class byte index */
 const_group_with_fmt! {
-    pub struct Class(u8): "Class"
+    pub struct Class(u8): "class"
 
     pub const ELFCLASSNONE = 0; /* Invalid class */
     pub const ELFCLASS32 = 1; /* 32-bit objects */
@@ -55,7 +73,7 @@ pub const ELFCLASSNUM: u8 = 3;
 
 pub const EI_DATA: usize = 5; /* Data encoding byte index */
 const_group_with_fmt! {
-    pub struct Data(u8): "Data"
+    pub struct Data(u8): "data"
 
     pub const ELFDATANONE = 0; /* Invalid data encoding */
     pub const ELFDATA2LSB = 1; /* 2's complement, little endian */
@@ -108,21 +126,26 @@ pub const EV_NONE: u32 = 0;
 // Sections
 // ------------------
 
-pub const SHN_UNDEF: u16 = 0; /* Undefined section */
+const_group_with_fmt! {
+    pub struct SectionIdx(u16): "SHN"
+
+    pub const SHN_UNDEF = 0; /* Undefined section */
+    pub const SHN_BEFORE = 0xff00; /* Order section before all others (Solaris).  */
+    pub const SHN_AFTER = 0xff01; /* Order section after all others (Solaris).  */
+
+    pub const SHN_ABS = 0xfff1; /* Associated symbol is absolute */
+    pub const SHN_COMMON = 0xfff2; /* Associated symbol is common */
+    pub const SHN_XINDEX = 0xffff; /* Index is in extra table.  */
+}
 pub const SHN_LORESERVE: u16 = 0xff00; /* Start of reserved indices */
 pub const SHN_LOPROC: u16 = 0xff00; /* Start of processor-specific */
-pub const SHN_BEFORE: u16 = 0xff00; /* Order section before all others (Solaris).  */
-pub const SHN_AFTER: u16 = 0xff01; /* Order section after all others (Solaris).  */
 pub const SHN_HIPROC: u16 = 0xff1f; /* End of processor-specific */
 pub const SHN_LOOS: u16 = 0xff20; /* Start of OS-specific */
 pub const SHN_HIOS: u16 = 0xff3f; /* End of OS-specific */
-pub const SHN_ABS: u16 = 0xfff1; /* Associated symbol is absolute */
-pub const SHN_COMMON: u16 = 0xfff2; /* Associated symbol is common */
-pub const SHN_XINDEX: u16 = 0xffff; /* Index is in extra table.  */
 pub const SHN_HIRESERVE: u16 = 0xffff; /* End of reserved indices */
 
 const_group_with_fmt! {
-    pub struct ShType(u32): "Section header type"
+    pub struct ShType(u32): "SHT"
 
     pub const SHT_NULL = 0; /* Section header table entry unused */
     pub const SHT_PROGBITS = 1; /* Program data */
@@ -163,8 +186,58 @@ pub const SHT_LOSUNW: u32 = 0x6ffffffa; /* Sun-specific low bound.  */
 pub const SHT_HISUNW: u32 = 0x6fffffff; /* Sun-specific high bound.  */
 pub const SHT_HIOS: u32 = 0x6fffffff; /* End OS-specific type */
 
+// ------------------
+// Symbols
+// ------------------
+
 const_group_with_fmt! {
-    pub struct RX86_64(u32): "x86_64 Relocation type"
+    pub struct SymbolType(u8): "STT"
+
+    pub const STT_NOTYPE = 0; /* Symbol type is unspecified */
+    pub const STT_OBJECT = 1; /* Symbol is a data object */
+    pub const STT_FUNC = 2; /* Symbol is a code object */
+    pub const STT_SECTION = 3; /* Symbol associated with a section */
+    pub const STT_FILE = 4; /* Symbol's name is file name */
+    pub const STT_COMMON = 5; /* Symbol is a common data object */
+    pub const STT_TLS = 6; /* Symbol is thread-local data object*/
+    pub const STT_NUM = 7; /* Number of defined types.  */
+    pub const STT_GNU_IFUNC = 10; /* Symbol is indirect code object */
+    pub const STT_HIOS = 12; /* End of OS-specific */
+    pub const STT_LOPROC = 13; /* Start of processor-specific */
+    pub const STT_HIPROC = 15; /* End of processor-specific */
+}
+pub const STT_LOOS: u32 = 10; /* Start of OS-specific */
+
+const_group_with_fmt! {
+    pub struct SymbolBinding(u8): "STB"
+
+    pub const STB_LOCAL = 0; /* Local symbol */
+    pub const STB_GLOBAL = 1; /* Global symbol */
+    pub const STB_WEAK = 2; /* Weak symbol */
+    pub const STB_NUM = 3; /* Number of defined types.  */
+    pub const STB_GNU_UNIQUE = 10; /* Unique symbol.  */
+    pub const STB_HIOS = 12; /* End of OS-specific */
+    pub const STB_LOPROC = 13; /* Start of processor-specific */
+    pub const STB_HIPROC = 15; /* End of processor-specific */
+}
+pub const STB_LOOS: u8 = 10; /* Start of OS-specific */
+
+/* Symbol visibility specification encoded in the st_other field.  */
+const_group_with_fmt! {
+    pub struct SymbolVisibility(u8): "STV"
+
+    pub const STV_DEFAULT = 0; /* Default symbol visibility rules */
+    pub const STV_INTERNAL = 1; /* Processor specific hidden class */
+    pub const STV_HIDDEN = 2; /* Sym unavailable in other modules */
+    pub const STV_PROTECTED = 3; /* Not preemptible, not exported */
+}
+
+// ------------------
+// Relocations
+// ------------------
+
+const_group_with_fmt! {
+    pub struct RX86_64(u32): "R_X86_64"
 
     pub const R_X86_64_NONE = 0; /* No reloc */
     pub const R_X86_64_64 = 1; /* Direct 64 bit  */
@@ -210,4 +283,10 @@ const_group_with_fmt! {
     pub const R_X86_64_GOTPCRELX = 41; /* Load from 32 bit signed pc relative offset to GOT entry without REX prefix, relaxable.  */
     pub const R_X86_64_REX_GOTPCRELX = 42; /* Load from 32 bit signed pc relative offset to GOT entry with REX prefix, relaxable.  */
     pub const R_X86_64_NUM = 43;
+}
+
+impl SectionIdx {
+    pub fn usize(self) -> usize {
+        self.0 as usize
+    }
 }

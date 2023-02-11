@@ -1,1 +1,2 @@
-pub mod raw;
+pub mod consts;
+pub mod defs;
