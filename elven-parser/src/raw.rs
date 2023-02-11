@@ -5,7 +5,13 @@
 pub mod consts;
 use consts as c;
 
-use std::{ffi::CStr, fmt::Debug, mem, ops, slice::SliceIndex};
+use std::{
+    ffi::CStr,
+    fmt::Debug,
+    mem,
+    ops::{self},
+    slice::SliceIndex,
+};
 
 use bytemuck::{Pod, PodCastError, Zeroable};
 
@@ -50,6 +56,8 @@ pub enum ElfParseError {
     IndexOutOfBounds(&'static str, usize),
     #[error("String in string table does not end with a nul terminator: String offset: {0}")]
     NoStringNulTerm(usize),
+    #[error("The SHT_SYMTAB section was not found")]
+    SymtabNotFound,
 }
 
 type Result<T> = std::result::Result<T, ElfParseError>;
@@ -82,13 +90,13 @@ pub struct ElfHeader {
 #[derive(Debug, Clone, Copy, Zeroable, Pod)]
 #[repr(C)]
 pub struct ElfIdent {
-    magic: [u8; c::SELFMAG],
-    class: u8,
-    data: u8,
-    version: u8,
-    osabi: u8,
-    abiversion: u8,
-    _pad: [u8; 7],
+    pub magic: [u8; c::SELFMAG],
+    pub class: c::Class,
+    pub data: c::Data,
+    pub version: u8,
+    pub osabi: c::OsAbi,
+    pub abiversion: u8,
+    pub _pad: [u8; 7],
 }
 
 const _: [u8; c::EI_NIDENT] = [0; mem::size_of::<ElfIdent>()];
@@ -121,6 +129,52 @@ pub struct Shdr {
     pub entsize: u64,
 }
 
+#[derive(Debug, Clone, Copy, Zeroable, Pod)]
+#[repr(C)]
+pub struct Sym {
+    pub name: u32,
+    pub info: u8,
+    pub other: u8,
+    pub shndx: u16,
+    pub value: Addr,
+    pub size: u64,
+}
+
+#[derive(Debug, Clone, Copy, Zeroable, Pod)]
+#[repr(C)]
+pub struct Rel {
+    pub offset: Addr,
+    pub info: RelInfo,
+}
+
+#[derive(Debug, Clone, Copy, Zeroable, Pod)]
+#[repr(C)]
+pub struct Rela {
+    pub offset: Addr,
+    pub info: RelInfo,
+    pub addend: u64,
+}
+
+#[derive(Clone, Copy, Zeroable, Pod)]
+#[repr(transparent)]
+pub struct RelInfo(u64);
+
+impl RelInfo {
+    pub fn sym(&self) -> u32 {
+        (self.0 >> 32) as u32
+    }
+
+    pub fn r#type(&self) -> u32 {
+        (self.0 & 0xffffffff) as u32
+    }
+}
+
+impl Debug for RelInfo {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?} @ {}", c::RX86_64(self.r#type()), self.sym())
+    }
+}
+
 impl<'a> Elf<'a> {
     pub fn new(data: &'a [u8]) -> Result<Self> {
         let magic = data[..c::SELFMAG].try_into().unwrap();
@@ -141,6 +195,10 @@ impl<'a> Elf<'a> {
     pub fn program_headers(&self) -> Result<&[Phdr]> {
         let header = self.header()?;
 
+        if header.phnum == 0 {
+            return Ok(&[]);
+        }
+
         let expected_ent_size = mem::size_of::<Phdr>();
         let actual_ent_size = usize::from(header.phentsize);
         if actual_ent_size != expected_ent_size {
@@ -159,6 +217,10 @@ impl<'a> Elf<'a> {
 
     pub fn section_headers(&self) -> Result<&[Shdr]> {
         let header = self.header()?;
+
+        if header.shnum == 0 {
+            return Ok(&[]);
+        }
 
         let expected_ent_size = mem::size_of::<Shdr>();
         let actual_ent_size = usize::from(header.shentsize);
@@ -221,6 +283,33 @@ impl<'a> Elf<'a> {
             .position(|&c| c == b'\0')
             .ok_or(ElfParseError::NoStringNulTerm(idx))?;
         Ok(CStr::from_bytes_with_nul(&indexed[..=end]).unwrap())
+    }
+
+    pub fn relas(&self) -> Result<impl Iterator<Item = (&Shdr, &Rela)>> {
+        Ok(self
+            .section_headers()?
+            .iter()
+            .filter(|sh| sh.r#type == c::SHT_RELA)
+            .map(|sh| {
+                let content = self.section_content(sh)?;
+                let relas = load_slice::<Rela>(content, content.len() / mem::size_of::<Rela>())?;
+                Ok((sh, relas))
+            })
+            .collect::<Result<Vec<_>>>()?
+            .into_iter()
+            .flat_map(|(sh, relas)| relas.iter().map(move |rela| (sh, rela))))
+    }
+
+    pub fn symbols(&self) -> Result<&[Sym]> {
+        let sh = self
+            .section_headers()?
+            .iter()
+            .find(|sh| sh.r#type == c::SHT_SYMTAB)
+            .ok_or(ElfParseError::SymtabNotFound)?;
+
+        let data = self.section_content(sh)?;
+
+        load_slice(data, data.len() / mem::size_of::<Sym>())
     }
 }
 
@@ -330,6 +419,36 @@ mod tests {
         for section in elf.section_headers()? {
             let name = elf.string(section.name as usize)?.to_str().unwrap();
             println!("{name:20} {:5} {:?}", section.size, section.r#type);
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn c_hello_world_object() -> super::Result<()> {
+        let file = load_test_file("hello_world_obj");
+        let elf = Elf::new(&file)?;
+        let header = elf.header()?;
+
+        assert_eq!(header.ident.class, c::ELFCLASS64);
+        assert_eq!(header.ident.data, c::ELFDATA2LSB);
+        assert_eq!(header.ident.osabi, c::ELFOSABI_SYSV);
+        assert_eq!(header.r#type, c::ET_REL);
+        assert_eq!(header.entry, Addr(0));
+
+        elf.program_headers()?;
+        elf.section_headers()?;
+
+        for sh in elf.section_headers()? {
+            let name = elf.string(sh.name as usize)?.to_str().unwrap();
+            println!("{name:20} {:5} {:?}", sh.size, sh.r#type);
+        }
+
+        println!("Relocations:");
+
+        for (sh, rela) in elf.relas()? {
+            let section_name = elf.string(sh.name as usize)?.to_str().unwrap();
+            println!("{section_name:20} {:?}", rela);
         }
 
         Ok(())

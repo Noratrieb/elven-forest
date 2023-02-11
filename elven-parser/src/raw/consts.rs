@@ -22,8 +22,14 @@ macro_rules! const_group_with_fmt {
                     $(
                         $value => f.write_str(stringify!($name)),
                     )*
-                    a => write!(f, "Invalid {}: {a}", $group_name,)
+                    a => write!(f, "Other {}: {a}", $group_name,)
                 }
+            }
+        }
+
+        impl PartialEq<$ty> for $struct_name {
+            fn eq(&self, other: &$ty) -> bool {
+                self.0 == *other
             }
         }
     };
@@ -38,36 +44,48 @@ pub const ELFMAG: &[u8; SELFMAG] = b"\x7fELF";
 pub const SELFMAG: usize = 4;
 
 pub const EI_CLASS: usize = 4; /* File class byte index */
-pub const ELFCLASSNONE: u8 = 0; /* Invalid class */
-pub const ELFCLASS32: u8 = 1; /* 32-bit objects */
-pub const ELFCLASS64: u8 = 2; /* 64-bit objects */
+const_group_with_fmt! {
+    pub struct Class(u8): "Class"
+
+    pub const ELFCLASSNONE = 0; /* Invalid class */
+    pub const ELFCLASS32 = 1; /* 32-bit objects */
+    pub const ELFCLASS64 = 2; /* 64-bit objects */
+}
 pub const ELFCLASSNUM: u8 = 3;
 
 pub const EI_DATA: usize = 5; /* Data encoding byte index */
-pub const ELFDATANONE: u8 = 0; /* Invalid data encoding */
-pub const ELFDATA2LSB: u8 = 1; /* 2's complement, little endian */
-pub const ELFDATA2MSB: u8 = 2; /* 2's complement, big endian */
+const_group_with_fmt! {
+    pub struct Data(u8): "Data"
+
+    pub const ELFDATANONE = 0; /* Invalid data encoding */
+    pub const ELFDATA2LSB = 1; /* 2's complement, little endian */
+    pub const ELFDATA2MSB = 2; /* 2's complement, big endian */
+}
 pub const ELFDATANUM: u8 = 3;
 
 pub const EI_VERSION: usize = 6; /* File version byte index */
 
 pub const EI_OSABI: usize = 7; /* OS ABI identification */
+const_group_with_fmt! {
+    pub struct OsAbi(u8): "OS ABI"
+
+    pub const ELFOSABI_SYSV = 0; /* Alias.  */
+    pub const ELFOSABI_HPUX = 1; /* HP-UX */
+    pub const ELFOSABI_NETBSD = 2; /* NetBSD.  */
+    pub const ELFOSABI_GNU = 3; /* Object uses GNU ELF extensions.  */
+    pub const ELFOSABI_SOLARIS = 6; /* Sun Solaris.  */
+    pub const ELFOSABI_AIX = 7; /* IBM AIX.  */
+    pub const ELFOSABI_IRIX = 8; /* SGI Irix.  */
+    pub const ELFOSABI_FREEBSD = 9; /* FreeBSD.  */
+    pub const ELFOSABI_TRU64 = 10; /* Compaq TRU64 UNIX.  */
+    pub const ELFOSABI_MODESTO = 11; /* Novell Modesto.  */
+    pub const ELFOSABI_OPENBSD = 12; /* OpenBSD.  */
+    pub const ELFOSABI_ARM_AEABI = 64; /* ARM EABI */
+    pub const ELFOSABI_ARM = 97; /* ARM */
+    pub const ELFOSABI_STANDALONE = 255; /* Standalone (embedded) application */
+}
 pub const ELFOSABI_NONE: u8 = 0; /* UNIX System V ABI */
-pub const ELFOSABI_SYSV: u8 = 0; /* Alias.  */
-pub const ELFOSABI_HPUX: u8 = 1; /* HP-UX */
-pub const ELFOSABI_NETBSD: u8 = 2; /* NetBSD.  */
-pub const ELFOSABI_GNU: u8 = 3; /* Object uses GNU ELF extensions.  */
-pub const ELFOSABI_LINUX: u8 = ELFOSABI_GNU; /* Compatibility alias.  */
-pub const ELFOSABI_SOLARIS: u8 = 6; /* Sun Solaris.  */
-pub const ELFOSABI_AIX: u8 = 7; /* IBM AIX.  */
-pub const ELFOSABI_IRIX: u8 = 8; /* SGI Irix.  */
-pub const ELFOSABI_FREEBSD: u8 = 9; /* FreeBSD.  */
-pub const ELFOSABI_TRU64: u8 = 10; /* Compaq TRU64 UNIX.  */
-pub const ELFOSABI_MODESTO: u8 = 11; /* Novell Modesto.  */
-pub const ELFOSABI_OPENBSD: u8 = 12; /* OpenBSD.  */
-pub const ELFOSABI_ARM_AEABI: u8 = 64; /* ARM EABI */
-pub const ELFOSABI_ARM: u8 = 97; /* ARM */
-pub const ELFOSABI_STANDALONE: u8 = 255; /* Standalone (embedded) application */
+pub const ELFOSABI_LINUX: u8 = 3; /* Compatibility alias.  */
 
 pub const EI_ABIVERSION: usize = 8; /* ABI version */
 
@@ -144,3 +162,52 @@ pub const SHT_LOOS: u32 = 0x60000000; /* Start OS-specific.  */
 pub const SHT_LOSUNW: u32 = 0x6ffffffa; /* Sun-specific low bound.  */
 pub const SHT_HISUNW: u32 = 0x6fffffff; /* Sun-specific high bound.  */
 pub const SHT_HIOS: u32 = 0x6fffffff; /* End OS-specific type */
+
+const_group_with_fmt! {
+    pub struct RX86_64(u32): "x86_64 Relocation type"
+
+    pub const R_X86_64_NONE = 0; /* No reloc */
+    pub const R_X86_64_64 = 1; /* Direct 64 bit  */
+    pub const R_X86_64_PC32 = 2; /* PC relative 32 bit signed */
+    pub const R_X86_64_GOT32 = 3; /* 32 bit GOT entry */
+    pub const R_X86_64_PLT32 = 4; /* 32 bit PLT address */
+    pub const R_X86_64_COPY = 5; /* Copy symbol at runtime */
+    pub const R_X86_64_GLOB_DAT = 6; /* Create GOT entry */
+    pub const R_X86_64_JUMP_SLOT = 7; /* Create PLT entry */
+    pub const R_X86_64_RELATIVE = 8; /* Adjust by program base */
+    pub const R_X86_64_GOTPCREL = 9; /* 32 bit signed PC relative offset to GOT */
+    pub const R_X86_64_32 = 10; /* Direct 32 bit zero extended */
+    pub const R_X86_64_32S = 11; /* Direct 32 bit sign extended */
+    pub const R_X86_64_16 = 12; /* Direct 16 bit zero extended */
+    pub const R_X86_64_PC16 = 13; /* 16 bit sign extended pc relative */
+    pub const R_X86_64_8 = 14; /* Direct 8 bit sign extended  */
+    pub const R_X86_64_PC8 = 15; /* 8 bit sign extended pc relative */
+    pub const R_X86_64_DTPMOD64 = 16; /* ID of module containing symbol */
+    pub const R_X86_64_DTPOFF64 = 17; /* Offset in module's TLS block */
+    pub const R_X86_64_TPOFF64 = 18; /* Offset in initial TLS block */
+    pub const R_X86_64_TLSGD = 19; /* 32 bit signed PC relative offset to two GOT entries for GD symbol */
+    pub const R_X86_64_TLSLD = 20; /* 32 bit signed PC relative offset to two GOT entries for LD symbol */
+    pub const R_X86_64_DTPOFF32 = 21; /* Offset in TLS block */
+    pub const R_X86_64_GOTTPOFF = 22; /* 32 bit signed PC relative offset to GOT entry for IE symbol */
+    pub const R_X86_64_TPOFF32 = 23; /* Offset in initial TLS block */
+    pub const R_X86_64_PC64 = 24; /* PC relative 64 bit */
+    pub const R_X86_64_GOTOFF64 = 25; /* 64 bit offset to GOT */
+    pub const R_X86_64_GOTPC32 = 26; /* 32 bit signed pc relative offset to GOT */
+    pub const R_X86_64_GOT64 = 27; /* 64-bit GOT entry offset */
+    pub const R_X86_64_GOTPCREL64 = 28; /* 64-bit PC relative offset to GOT entry */
+    pub const R_X86_64_GOTPC64 = 29; /* 64-bit PC relative offset to GOT */
+    pub const R_X86_64_GOTPLT64 = 30; /* like GOT64, says PLT entry needed */
+    pub const R_X86_64_PLTOFF64 = 31; /* 64-bit GOT relative offset to PLT entry */
+    pub const R_X86_64_SIZE32 = 32; /* Size of symbol plus 32-bit addend */
+    pub const R_X86_64_SIZE64 = 33; /* Size of symbol plus 64-bit addend */
+    pub const R_X86_64_GOTPC32_TLSDESC = 34; /* GOT offset for TLS descriptor.  */
+    pub const R_X86_64_TLSDESC_CALL = 35; /* Marker for call through TLS descriptor.  */
+    pub const R_X86_64_TLSDESC = 36; /* TLS descriptor.  */
+    pub const R_X86_64_IRELATIVE = 37; /* Adjust indirectly by program base */
+    pub const R_X86_64_RELATIVE64 = 38; /* 64-bit adjust by program base */
+    /* 39 Reserved was R_X86_64_PC32_BND */
+    /* 40 Reserved was R_X86_64_PLT32_BND */
+    pub const R_X86_64_GOTPCRELX = 41; /* Load from 32 bit signed pc relative offset to GOT entry without REX prefix, relaxable.  */
+    pub const R_X86_64_REX_GOTPCRELX = 42; /* Load from 32 bit signed pc relative offset to GOT entry with REX prefix, relaxable.  */
+    pub const R_X86_64_NUM = 43;
+}
