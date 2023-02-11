@@ -2,10 +2,14 @@
 //!
 //! See https://man7.org/linux/man-pages/man5/elf.5.html
 
-use crate::consts as c;
+use crate::{
+    consts as c,
+    idx::{define_idx, ElfIndexExt, ToIdxUsize},
+    ElfParseError, Result,
+};
 use bstr::BStr;
 
-use std::{fmt::Debug, mem, ops, slice::SliceIndex, string};
+use std::{fmt::Debug, mem, string};
 
 use bytemuck::{Pod, PodCastError, Zeroable};
 
@@ -18,49 +22,23 @@ pub struct Addr(pub u64);
 #[repr(transparent)]
 pub struct Offset(pub u64);
 
-impl Offset {
-    fn usize(self) -> usize {
+impl ToIdxUsize for Offset {
+    fn to_idx_usize(self) -> usize {
         self.0 as usize
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Zeroable, Pod)]
-#[repr(transparent)]
-pub struct ShStringIdx(pub u32);
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Zeroable, Pod)]
-#[repr(transparent)]
-pub struct StringIdx(pub u32);
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Zeroable, Pod)]
-#[repr(transparent)]
-pub struct SymIdx(pub u32);
-
-#[derive(Debug, Clone, thiserror::Error)]
-pub enum ElfParseError {
-    #[error("The file is too small. Expected at least {0} bytes, found {1} bytes")]
-    FileTooSmall(usize, usize),
-    #[error("The input is not aligned in memory. Expected align {0}, found align {1}")]
-    UnalignedInput(usize, usize),
-    #[error("The magic of the file did not match. Maybe it's not an ELF file?. Found {0:x?}")]
-    WrongMagic([u8; 4]),
-    #[error("A program header entry has a different size than expected. Expected {0}, found {1}")]
-    InvalidPhEntSize(usize, usize),
-    #[error("A section header entry has a different size than expected. Expected {0}, found {1}")]
-    InvalidShEntSize(usize, usize),
-    #[error("The string table section is marked as UNDEF")]
-    StrTableSectionNotPresent,
-    #[error("An index is out of bounds: {0}: {1}")]
-    IndexOutOfBounds(&'static str, usize),
-    #[error("String in string table does not end with a nul terminator: String offset: {0}")]
-    NoStringNulTerm(usize),
-    #[error("The SHT_SYMTAB section was not found")]
-    SymtabNotFound,
-    #[error("The section with the name {0:?} was not found")]
-    SectionNotFound(std::result::Result<string::String, Vec<u8>>),
+define_idx! {
+    pub struct ShStringIdx(u32);
 }
 
-type Result<T> = std::result::Result<T, ElfParseError>;
+define_idx! {
+    pub struct StringIdx(u32);
+}
+
+define_idx! {
+    pub struct SymIdx(u32);
+}
 
 /// A raw ELF. Does not come with cute ears for now.
 #[derive(Debug)]
@@ -228,9 +206,8 @@ impl<'a> Elf<'a> {
             ));
         }
 
-        let off = header.phoff.usize();
         load_slice(
-            self.data.get_elf(off.., "program header offset")?,
+            self.data.get_elf(header.phoff.., "program header offset")?,
             header.phnum.into(),
         )
     }
@@ -250,9 +227,8 @@ impl<'a> Elf<'a> {
                 actual_ent_size,
             ));
         }
-        let off = header.shoff.usize();
         load_slice(
-            self.data.get_elf(off.., "sectoin header offset")?,
+            self.data.get_elf(header.shoff.., "sectoin header offset")?,
             header.shnum.into(),
         )
     }
@@ -281,8 +257,8 @@ impl<'a> Elf<'a> {
         }
 
         self.data
-            .get_elf(sh.offset.usize().., "section offset")?
-            .get_elf(..(sh.size as usize), "section size")
+            .get_elf(sh.offset.., "section offset")?
+            .get_elf(..sh.size, "section size")
     }
 
     pub fn sh_str_table(&self) -> Result<&[u8]> {
@@ -313,24 +289,22 @@ impl<'a> Elf<'a> {
     }
 
     pub fn sh_string(&self, idx: ShStringIdx) -> Result<&BStr> {
-        let idx = idx.0 as usize;
         let str_table = self.sh_str_table()?;
         let indexed = str_table.get_elf(idx.., "string offset")?;
         let end = indexed
             .iter()
             .position(|&c| c == b'\0')
-            .ok_or(ElfParseError::NoStringNulTerm(idx))?;
+            .ok_or(ElfParseError::NoStringNulTerm(idx.to_idx_usize()))?;
         Ok(BStr::new(&indexed[..end]))
     }
 
     pub fn string(&self, idx: StringIdx) -> Result<&BStr> {
-        let idx = idx.0 as usize;
         let str_table = self.str_table()?;
         let indexed = str_table.get_elf(idx.., "string offset")?;
         let end = indexed
             .iter()
             .position(|&c| c == b'\0')
-            .ok_or(ElfParseError::NoStringNulTerm(idx))?;
+            .ok_or(ElfParseError::NoStringNulTerm(idx.to_idx_usize()))?;
         Ok(BStr::new(&indexed[..end]))
     }
 
@@ -362,7 +336,6 @@ impl<'a> Elf<'a> {
     }
 
     pub fn symbol(&self, idx: SymIdx) -> Result<&Sym> {
-        let idx = idx.0 as usize;
         self.symbols()?.get_elf(idx, "symbol index")
     }
 }
@@ -394,40 +367,6 @@ fn load_slice<T: Pod>(data: &[u8], amount_of_elems: usize) -> Result<&[T]> {
             ElfParseError::UnalignedInput(align, data_align)
         }
     })
-}
-
-trait ElfIndex<T: ?Sized>: SliceIndex<T> {
-    fn bound(&self) -> usize;
-}
-
-impl<T> ElfIndex<[T]> for usize {
-    fn bound(&self) -> usize {
-        *self
-    }
-}
-
-impl<T> ElfIndex<[T]> for ops::RangeFrom<usize> {
-    fn bound(&self) -> usize {
-        self.start
-    }
-}
-
-impl<T> ElfIndex<[T]> for ops::RangeTo<usize> {
-    fn bound(&self) -> usize {
-        self.end
-    }
-}
-
-trait ElfIndexExt {
-    fn get_elf<I: ElfIndex<Self>>(&self, idx: I, msg: &'static str) -> Result<&I::Output>;
-}
-
-impl<T> ElfIndexExt for [T] {
-    fn get_elf<I: ElfIndex<Self>>(&self, idx: I, msg: &'static str) -> Result<&I::Output> {
-        let bound = idx.bound();
-        self.get(idx)
-            .ok_or(ElfParseError::IndexOutOfBounds(msg, bound))
-    }
 }
 
 #[cfg(test)]
