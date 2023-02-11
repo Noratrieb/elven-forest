@@ -2,13 +2,23 @@
 
 use std::mem;
 
-#[derive(Debug)]
+use bytemuck::{Pod, PodCastError, Zeroable};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Zeroable, Pod)]
+#[repr(transparent)]
+
 pub struct Addr(u64);
-#[derive(Debug)]
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Zeroable, Pod)]
+#[repr(transparent)]
 pub struct Offset(u64);
-#[derive(Debug)]
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Zeroable, Pod)]
+#[repr(transparent)]
 pub struct Section(u16);
-#[derive(Debug)]
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Zeroable, Pod)]
+#[repr(transparent)]
 pub struct Versym(u16);
 
 #[derive(Debug, Clone, thiserror::Error)]
@@ -27,7 +37,7 @@ pub struct Elf<'a> {
     pub header: &'a ElfHeader,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy, Zeroable, Pod)]
 #[repr(C)]
 pub struct ElfHeader {
     pub ident: [u8; 16],
@@ -46,6 +56,10 @@ pub struct ElfHeader {
     pub shstrndex: u16,
 }
 
+#[derive(Debug)]
+#[repr(C)]
+pub struct Phdr {}
+
 impl<'a> Elf<'a> {
     pub fn parse(input: &'a [u8]) -> Result<Self, ElfParseError> {
         const HEADER_SIZE: usize = mem::size_of::<ElfHeader>();
@@ -55,19 +69,26 @@ impl<'a> Elf<'a> {
             return Err(ElfParseError::FileTooSmall(HEADER_SIZE, input.len()));
         }
 
-        let input_ptr = input as *const [u8];
+        let input_addr = input as *const [u8] as *const u8 as usize;
+        let input_align = input_addr.trailing_zeros() as usize;
 
-        let input_addr = input_ptr as *const u8 as usize;
-        let align = input_addr.trailing_zeros() as usize;
+        let input_header = &input[..HEADER_SIZE];
 
-        if align < HEADER_ALIGN {
-            return Err(ElfParseError::UnalignedInput(HEADER_ALIGN, align));
-        }
+        let header_slice = match bytemuck::try_cast_slice::<_, ElfHeader>(input_header) {
+            Ok(slice) => slice,
+            Err(
+                PodCastError::SizeMismatch
+                | PodCastError::OutputSliceWouldHaveSlop
+                | PodCastError::AlignmentMismatch,
+            ) => {
+                unreachable!()
+            }
+            Err(PodCastError::TargetAlignmentGreaterAndInputNotAligned) => {
+                return Err(ElfParseError::UnalignedInput(HEADER_ALIGN, input_align))
+            }
+        };
 
-        let header = input_ptr as *const ElfHeader;
-        // SAFETY: We checked that the size is enough. We checked that the alignment matches.
-        // ElfHeader is POD.
-        let header = unsafe { &*header };
+        let header = &header_slice[0];
 
         let magic = header.ident[..4].try_into().unwrap();
 
@@ -107,8 +128,6 @@ mod tests {
     #[test]
     fn rust_hello_world_bin() {
         let file = load_test_file("hello_world");
-        let elf = Elf::parse(&file).unwrap();
-        dbg!(elf);
-        panic!()
+        let _ = Elf::parse(&file).unwrap();
     }
 }
