@@ -56,7 +56,7 @@ define_idx! {
 }
 
 /// A raw ELF. Does not come with cute ears for now.
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct Elf<'a> {
     pub data: &'a [u8],
 }
@@ -148,6 +148,12 @@ impl SymInfo {
 }
 
 impl Debug for SymInfo {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?},{:?}", self.r#type(), self.binding())
+    }
+}
+
+impl Display for SymInfo {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{:?},{:?}", self.r#type(), self.binding())
     }

@@ -8,6 +8,9 @@ for rust_file in $SCRIPT_DIR/*.rs; do
 done
 
 for c_obj_file in $SCRIPT_DIR/*_obj.c; do
-    echo $c_obj_file
-    cc "$c_obj_file" -c -o "$SCRIPT_DIR/out/$(basename $c_obj_file .c)"
+    cc "$c_obj_file" -c -o "$SCRIPT_DIR/out/$(basename $c_obj_file .c).o"
+done
+
+for asm_file in $SCRIPT_DIR/*.asm; do
+    nasm "$asm_file" -felf64 -o "$SCRIPT_DIR/out/$(basename $asm_file .asm).o"
 done

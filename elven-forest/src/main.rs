@@ -2,8 +2,8 @@ use std::{fmt::Display, fs::File};
 
 use anyhow::Context;
 use elven_parser::{
-    consts::{self as c, DynamicTag, ShType, RX86_64},
-    defs::{Addr, Elf},
+    consts::{self as c, DynamicTag, ShType, SymbolVisibility, RX86_64},
+    defs::{Addr, Elf, Sym, SymInfo},
     ElfParseError,
 };
 use memmap2::Mmap;
@@ -29,6 +29,16 @@ struct SectionTable {
     r#type: ShType,
     size: u64,
     offset: u64,
+}
+
+#[derive(Tabled)]
+struct SymbolTable {
+    name: String,
+    info: SymInfo,
+    other: SymbolVisibility,
+    section: String,
+    value: Addr,
+    size: u64,
 }
 
 #[derive(Tabled)]
@@ -92,6 +102,34 @@ fn print_file(path: &str) -> anyhow::Result<()> {
 
     print_table(Table::new(sections));
 
+    println!("\nSymbols");
+
+    let symbols = elf
+        .symbols()?
+        .iter()
+        .map(|sym| {
+            let name = sym_display_name(elf, sym)?;
+            let section = match sym.shndx.0 {
+                c::SHN_ABS => " ".to_string(),
+                c::SHN_COMMON => "".to_string(),
+                _ => elf
+                    .sh_string(elf.section_header(sym.shndx)?.name)?
+                    .to_string(),
+            };
+
+            Ok(SymbolTable {
+                name,
+                info: sym.info,
+                other: sym.other,
+                section,
+                size: sym.size,
+                value: sym.value,
+            })
+        })
+        .collect::<Result<Vec<_>, ElfParseError>>()?;
+
+    print_table(Table::new(symbols));
+
     println!("\nRelocations");
 
     let relas = elf
@@ -101,12 +139,7 @@ fn print_file(path: &str) -> anyhow::Result<()> {
 
             let sym = elf.symbol(rela.info.sym())?;
 
-            let symbol = if sym.info.r#type() == c::STT_SECTION {
-                elf.sh_string(elf.section_header(sym.shndx)?.name)?
-                    .to_string()
-            } else {
-                elf.string(sym.name)?.to_string()
-            };
+            let symbol = sym_display_name(elf, sym)?;
 
             let offset = Addr(rela.offset.0);
             let r#type = c::RX86_64(rela.info.r#type());
@@ -137,6 +170,15 @@ fn print_file(path: &str) -> anyhow::Result<()> {
     println!();
 
     Ok(())
+}
+
+fn sym_display_name(elf: Elf<'_>, sym: &Sym) -> Result<String, ElfParseError> {
+    Ok(if sym.info.r#type() == c::STT_SECTION {
+        elf.sh_string(elf.section_header(sym.shndx)?.name)?
+            .to_string()
+    } else {
+        elf.string(sym.name)?.to_string()
+    })
 }
 
 fn print_table(mut table: Table) {
