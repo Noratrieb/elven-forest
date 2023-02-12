@@ -2,7 +2,7 @@ use std::{fmt::Display, fs::File};
 
 use anyhow::Context;
 use elven_parser::{
-    consts::{DynamicTag, ShType, RX86_64},
+    consts::{self as c, DynamicTag, ShType, RX86_64},
     defs::{Addr, Elf},
     ElfParseError,
 };
@@ -25,19 +25,20 @@ struct HeaderTable<'a>(&'static str, &'a dyn Display);
 #[derive(Tabled)]
 struct SectionTable {
     name: String,
-    size: u64,
     #[tabled(rename = "type")]
     r#type: ShType,
+    size: u64,
+    offset: u64,
 }
 
 #[derive(Tabled)]
 struct RelaTable {
     section: String,
     symbol: String,
-    offset: u64,
+    offset: Addr,
     #[tabled(rename = "type")]
     r#type: RX86_64,
-    addend: u64,
+    addend: i64,
 }
 
 #[derive(Tabled)]
@@ -82,8 +83,9 @@ fn print_file(path: &str) -> anyhow::Result<()> {
             let name = elf.sh_string(sh.name)?.to_string();
             Ok(SectionTable {
                 name,
-                size: sh.size,
                 r#type: sh.r#type,
+                size: sh.size,
+                offset: sh.offset.0,
             })
         })
         .collect::<Result<Vec<_>, ElfParseError>>()?;
@@ -98,10 +100,16 @@ fn print_file(path: &str) -> anyhow::Result<()> {
             let section = elf.sh_string(sh.name)?.to_string();
 
             let sym = elf.symbol(rela.info.sym())?;
-            let symbol = elf.string(sym.name)?.to_string();
 
-            let offset = rela.offset.0;
-            let r#type = elven_parser::consts::RX86_64(rela.info.r#type());
+            let symbol = if sym.info.r#type() == c::STT_SECTION {
+                elf.sh_string(elf.section_header(sym.shndx)?.name)?
+                    .to_string()
+            } else {
+                elf.string(sym.name)?.to_string()
+            };
+
+            let offset = Addr(rela.offset.0);
+            let r#type = c::RX86_64(rela.info.r#type());
             let addend = rela.addend;
 
             Ok(RelaTable {

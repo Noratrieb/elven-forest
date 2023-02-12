@@ -165,7 +165,7 @@ pub struct Rel {
 pub struct Rela {
     pub offset: Addr,
     pub info: RelInfo,
-    pub addend: u64,
+    pub addend: i64,
 }
 
 #[derive(Clone, Copy, Zeroable, Pod)]
