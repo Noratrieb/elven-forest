@@ -1,6 +1,6 @@
 //! Structures and parsers for ELF64. ELF32 can knock itself out.
 //!
-//! See https://man7.org/linux/man-pages/man5/elf.5.html
+//! See <https://man7.org/linux/man-pages/man5/elf.5.html>
 
 use crate::{
     consts::{self as c, DynamicTag, ShType},
@@ -11,7 +11,8 @@ use bstr::BStr;
 
 use std::{
     fmt::{Debug, Display},
-    mem, string,
+    mem,
+    string::{self, FromUtf8Error},
 };
 
 use bytemuck::{Pod, PodCastError, Zeroable};
@@ -39,7 +40,7 @@ pub struct Offset(pub u64);
 
 impl ToIdxUsize for Offset {
     fn to_idx_usize(self) -> usize {
-        self.0 as usize
+        self.0.to_idx_usize()
     }
 }
 
@@ -184,7 +185,7 @@ impl RelInfo {
     }
 
     pub fn r#type(&self) -> u32 {
-        (self.0 & 0xffffffff) as u32
+        (self.0 & 0xffff_ffff) as u32
     }
 }
 
@@ -203,7 +204,11 @@ pub struct Dyn {
 
 impl<'a> Elf<'a> {
     pub fn new(data: &'a [u8]) -> Result<Self> {
-        let magic = data[..c::SELFMAG].try_into().unwrap();
+        let magic = data[..c::SELFMAG].try_into().map_err(|_| {
+            let mut padded = [0, 0, 0, 0];
+            padded.copy_from_slice(data);
+            ElfParseError::WrongMagic(padded)
+        })?;
 
         if magic != *c::ELFMAG {
             return Err(ElfParseError::WrongMagic(magic));
@@ -275,7 +280,7 @@ impl<'a> Elf<'a> {
         }
         let name = name.to_vec();
         Err(ElfParseError::SectionNotFound(
-            string::String::from_utf8(name).map_err(|err| err.into_bytes()),
+            string::String::from_utf8(name).map_err(FromUtf8Error::into_bytes),
         ))
     }
 
@@ -435,7 +440,7 @@ fn load_slice<T: Pod>(data: &[u8], amount_of_elems: usize) -> Result<&[T]> {
         return Err(ElfParseError::FileTooSmall(size, data.len()));
     }
 
-    let data_addr = data as *const [u8] as *const u8 as usize;
+    let data_addr = (data as *const [u8]).cast::<u8>() as usize;
     let data_align = data_addr.trailing_zeros() as usize;
 
     let data = &data[..size];

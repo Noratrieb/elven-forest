@@ -1,4 +1,5 @@
 #![allow(non_upper_case_globals)]
+#![allow(clippy::unreadable_literal)]
 
 macro_rules! const_group_with_fmt {
     (

@@ -73,6 +73,7 @@ impl ToIdxUsize for usize {
     }
 }
 impl ToIdxUsize for u64 {
+    #[allow(clippy::cast_possible_truncation)]
     fn to_idx_usize(self) -> usize {
         self as usize
     }

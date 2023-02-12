@@ -1,3 +1,5 @@
+#![allow(clippy::must_use_candidate, clippy::missing_errors_doc)]
+
 use consts::{DynamicTag, ShType};
 
 pub mod consts;

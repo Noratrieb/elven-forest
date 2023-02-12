@@ -110,8 +110,7 @@ fn print_file(path: &str) -> anyhow::Result<()> {
         .map(|sym| {
             let name = sym_display_name(elf, sym)?;
             let section = match sym.shndx.0 {
-                c::SHN_ABS => " ".to_string(),
-                c::SHN_COMMON => "".to_string(),
+                c::SHN_ABS | c::SHN_COMMON => String::new(),
                 _ => elf
                     .sh_string(elf.section_header(sym.shndx)?.name)?
                     .to_string(),
