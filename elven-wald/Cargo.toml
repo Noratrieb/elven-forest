@@ -1,0 +1,14 @@
+[package]
+name = "elven-wald"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+anyhow = "1.0.69"
+clap = { version = "4.1.4", features = ["derive"] }
+elven-parser = { path = "../elven-parser" }
+memmap2 = "0.5.8"
+tracing = "0.1.37"
+tracing-subscriber = { version = "0.3.16", features = ["env-filter"] }
