@@ -129,8 +129,12 @@ pub const ET_EXEC: u16 = 2;
 pub const ET_DYN: u16 = 3;
 pub const ET_CORE: u16 = 4;
 
-pub const EM_NONE: u16 = 0; /* No machine */
-pub const EM_X86_64: u16 = 62; /* AMD x86-64 architecture */
+const_group_with_fmt! {
+    pub struct Machine(u16): "Machine"
+
+    pub const EM_NONE = 0; /* No machine */
+    pub const EM_X86_64 = 62; /* AMD x86-64 architecture */
+}
 
 pub const EV_NONE: u32 = 0;
 
@@ -296,6 +300,105 @@ const_group_with_fmt! {
     pub const R_X86_64_REX_GOTPCRELX = 42; /* Load from 32 bit signed pc relative offset to GOT entry with REX prefix, relaxable.  */
     pub const R_X86_64_NUM = 43;
 }
+
+// ------------------
+// Dynamic
+// ------------------
+
+const_group_with_fmt! {
+    pub struct DynamicTag(u64): "DT"
+
+    pub const DT_NULL = 0; /* Marks end of dynamic section */
+    pub const DT_NEEDED = 1; /* Name of needed library */
+    pub const DT_PLTRELSZ = 2; /* Size in bytes of PLT relocs */
+    pub const DT_PLTGOT = 3; /* Processor defined value */
+    pub const DT_HASH = 4; /* Address of symbol hash table */
+    pub const DT_STRTAB = 5; /* Address of string table */
+    pub const DT_SYMTAB = 6; /* Address of symbol table */
+    pub const DT_RELA = 7; /* Address of Rela relocs */
+    pub const DT_RELASZ = 8; /* Total size of Rela relocs */
+    pub const DT_RELAENT = 9; /* Size of one Rela reloc */
+    pub const DT_STRSZ = 10; /* Size of string table */
+    pub const DT_SYMENT = 11; /* Size of one symbol table entry */
+    pub const DT_INIT = 12; /* Address of init function */
+    pub const DT_FINI = 13; /* Address of termination function */
+    pub const DT_SONAME = 14; /* Name of shared object */
+    pub const DT_RPATH = 15; /* Library search path (deprecated) */
+    pub const DT_SYMBOLIC = 16; /* Start symbol search here */
+    pub const DT_REL = 17; /* Address of Rel relocs */
+    pub const DT_RELSZ = 18; /* Total size of Rel relocs */
+    pub const DT_RELENT = 19; /* Size of one Rel reloc */
+    pub const DT_PLTREL = 20; /* Type of reloc in PLT */
+    pub const DT_DEBUG = 21; /* For debugging; unspecified */
+    pub const DT_TEXTREL = 22; /* Reloc might modify .text */
+    pub const DT_JMPREL = 23; /* Address of PLT relocs */
+    pub const DT_BIND_NOW = 24; /* Process relocations of object */
+    pub const DT_INIT_ARRAY = 25; /* Array with addresses of init fct */
+    pub const DT_FINI_ARRAY = 26; /* Array with addresses of fini fct */
+    pub const DT_INIT_ARRAYSZ = 27; /* Size in bytes of DT_INIT_ARRAY */
+    pub const DT_FINI_ARRAYSZ = 28; /* Size in bytes of DT_FINI_ARRAY */
+    pub const DT_RUNPATH = 29; /* Library search path */
+    pub const DT_FLAGS = 30; /* Flags for the object being loaded */
+    pub const DT_PREINIT_ARRAY = 32; /* Array with addresses of preinit fct*/
+    pub const DT_PREINIT_ARRAYSZ = 33; /* size in bytes of DT_PREINIT_ARRAY */
+    pub const DT_SYMTAB_SHNDX = 34; /* Address of SYMTAB_SHNDX section */
+    pub const DT_NUM = 35; /* Number used */
+    pub const DT_PROCNUM = 0x37; /* Most used by any processor */
+
+    /* DT_* entries which fall between DT_VALRNGHI & DT_VALRNGLO use the
+    Dyn.d_un.d_val field of the Elf*_Dyn structure.  This follows Sun's
+    approach.  */
+    pub const DT_GNU_PRELINKED = 0x6ffffdf5; /* Prelinking timestamp */
+    pub const DT_GNU_CONFLICTSZ = 0x6ffffdf6; /* Size of conflict section */
+    pub const DT_GNU_LIBLISTSZ = 0x6ffffdf7; /* Size of library list */
+    pub const DT_CHECKSUM = 0x6ffffdf8;
+    pub const DT_PLTPADSZ = 0x6ffffdf9;
+    pub const DT_MOVEENT = 0x6ffffdfa;
+    pub const DT_MOVESZ = 0x6ffffdfb;
+    pub const DT_FEATURE_1 = 0x6ffffdfc; /* Feature selection (DTF_*).  */
+    pub const DT_POSFLAG_1 = 0x6ffffdfd; /* Flags for DT_* entries, effecting the: u following DT_* entry.  */
+    pub const DT_SYMINSZ = 0x6ffffdfe; /* Size of syminfo table (in bytes) */
+    pub const DT_SYMINENT = 0x6ffffdff; /* Entry size of syminfo */
+
+    /* DT_* entries which fall between DT_ADDRRNGHI & DT_ADDRRNGLO use the
+    Dyn.d_un.d_ptr field of the Elf*_Dyn structure.
+
+    If any adjustment is made to the ELF object after it has been
+    built these entries will need to be adjusted.  */
+    pub const DT_GNU_HASH = 0x6ffffef5; /* GNU-style hash table.  */
+    pub const DT_TLSDESC_PLT = 0x6ffffef6;
+    pub const DT_TLSDESC_GOT = 0x6ffffef7;
+    pub const DT_GNU_CONFLICT = 0x6ffffef8; /* Start of conflict section */
+    pub const DT_GNU_LIBLIST = 0x6ffffef9; /* Library list */
+    pub const DT_CONFIG = 0x6ffffefa; /* Configuration information.  */
+    pub const DT_DEPAUDIT = 0x6ffffefb; /* Dependency auditing.  */
+    pub const DT_AUDIT = 0x6ffffefc; /* Object auditing.  */
+    pub const DT_PLTPAD = 0x6ffffefd; /* PLT padding.  */
+    pub const DT_MOVETAB = 0x6ffffefe; /* Move table.  */
+    pub const DT_SYMINFO = 0x6ffffeff; /* Syminfo table.  */
+
+    /* The versioning entry types.  The next are defined as part of the
+    GNU extension.  */
+    pub const DT_VERSYM = 0x6ffffff0;
+    pub const DT_RELACOUNT = 0x6ffffff9;
+    pub const DT_RELCOUNT = 0x6ffffffa;
+    /* These were chosen by Sun.  */
+    pub const DT_FLAGS_1 = 0x6ffffffb; /* State flags, see DF_1_* below.  */
+    pub const DT_VERDEF = 0x6ffffffc; /* Address of version definition table */
+    pub const DT_VERDEFNUM = 0x6ffffffd; /* Number of version definitions */
+    pub const DT_VERNEED = 0x6ffffffe; /* Address of table with needed versions */
+    pub const DT_VERNEEDNUM = 0x6fffffff; /* Number of needed versions */
+}
+
+pub const DT_ENCODING: u64 = 32; /* Start of encoded range */
+pub const DT_LOOS: u64 = 0x6000000d; /* Start of OS-specific */
+pub const DT_HIOS: u64 = 0x6ffff000; /* End of OS-specific */
+pub const DT_LOPROC: u64 = 0x70000000; /* Start of processor-specific */
+pub const DT_HIPROC: u64 = 0x7fffffff; /* End of processor-specific */
+pub const DT_ADDRRNGLO: u64 = 0x6ffffe00;
+pub const DT_ADDRRNGHI: u64 = 0x6ffffeff;
+pub const DT_VALRNGLO: u64 = 0x6ffffd00;
+pub const DT_VALRNGHI: u64 = 0x6ffffdff;
 
 impl SectionIdx {
     pub fn usize(self) -> usize {

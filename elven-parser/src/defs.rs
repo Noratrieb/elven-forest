@@ -3,13 +3,16 @@
 //! See https://man7.org/linux/man-pages/man5/elf.5.html
 
 use crate::{
-    consts as c,
+    consts::{self as c, DynamicTag, ShType},
     idx::{define_idx, ElfIndexExt, ToIdxUsize},
     ElfParseError, Result,
 };
 use bstr::BStr;
 
-use std::{fmt::{Debug, Display}, mem, string};
+use std::{
+    fmt::{Debug, Display},
+    mem, string,
+};
 
 use bytemuck::{Pod, PodCastError, Zeroable};
 
@@ -20,13 +23,13 @@ pub struct Addr(pub u64);
 
 impl Debug for Addr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:x}", self.0)
+        write!(f, "0x{:x}", self.0)
     }
 }
 
 impl Display for Addr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:x}", self.0)
+        write!(f, "0x{:x}", self.0)
     }
 }
 
@@ -63,7 +66,7 @@ pub struct Elf<'a> {
 pub struct ElfHeader {
     pub ident: ElfIdent,
     pub r#type: u16,
-    pub machine: u16,
+    pub machine: c::Machine,
     pub version: u32,
     pub entry: Addr,
     pub phoff: Offset,
@@ -185,6 +188,13 @@ impl Debug for RelInfo {
     }
 }
 
+#[derive(Debug, Clone, Copy, Zeroable, Pod)]
+#[repr(C)]
+pub struct Dyn {
+    pub tag: c::DynamicTag,
+    pub val: u64,
+}
+
 impl<'a> Elf<'a> {
     pub fn new(data: &'a [u8]) -> Result<Self> {
         let magic = data[..c::SELFMAG].try_into().unwrap();
@@ -263,6 +273,13 @@ impl<'a> Elf<'a> {
         ))
     }
 
+    pub fn section_header_by_type(&self, ty: u32) -> Result<&Shdr> {
+        self.section_headers()?
+            .iter()
+            .find(|sh| sh.r#type == ty)
+            .ok_or(ElfParseError::SectionTypeNotFound(ShType(ty)))
+    }
+
     pub fn section_content(&self, sh: &Shdr) -> Result<&[u8]> {
         if sh.r#type.0 == c::SHT_NOBITS {
             return Ok(&[]);
@@ -320,6 +337,23 @@ impl<'a> Elf<'a> {
         Ok(BStr::new(&indexed[..end]))
     }
 
+    pub fn dyn_string(&self, idx: StringIdx) -> Result<&BStr> {
+        let tab_addr = self.dyn_entry_by_tag(c::DT_STRTAB)?;
+        let tab_sz = self.dyn_entry_by_tag(c::DT_STRSZ)?;
+
+        let str_table = self
+            .data
+            .get_elf(tab_addr.val.., "dyn string table")?
+            .get_elf(..tab_sz.val, "dyn string table size")?;
+
+        let indexed = str_table.get_elf(idx.., "string offset")?;
+        let end = indexed
+            .iter()
+            .position(|&c| c == b'\0')
+            .ok_or(ElfParseError::NoStringNulTerm(idx.to_idx_usize()))?;
+        Ok(BStr::new(&indexed[..end]))
+    }
+
     pub fn relas(&self) -> Result<impl Iterator<Item = (&Shdr, &Rela)>> {
         Ok(self
             .section_headers()?
@@ -336,11 +370,7 @@ impl<'a> Elf<'a> {
     }
 
     pub fn symbols(&self) -> Result<&[Sym]> {
-        let sh = self
-            .section_headers()?
-            .iter()
-            .find(|sh| sh.r#type == c::SHT_SYMTAB)
-            .ok_or(ElfParseError::SymtabNotFound)?;
+        let sh = self.section_header_by_type(c::SHT_SYMTAB)?;
 
         let data = self.section_content(sh)?;
 
@@ -349,6 +379,41 @@ impl<'a> Elf<'a> {
 
     pub fn symbol(&self, idx: SymIdx) -> Result<&Sym> {
         self.symbols()?.get_elf(idx, "symbol index")
+    }
+
+    pub fn dyn_symbols(&self) -> Result<&[Sym]> {
+        let addr = self.dyn_entry_by_tag(c::DT_SYMTAB)?;
+        let size = self.dyn_entry_by_tag(c::DT_SYMENT)?;
+
+        dbg!(addr, size);
+
+        let data = self.dyn_content(addr.val, size.val)?;
+
+        load_slice(data, data.len() / mem::size_of::<Sym>())
+    }
+
+    pub fn dyn_symbol(&self, idx: SymIdx) -> Result<&Sym> {
+        dbg!(self.dyn_symbols()?).get_elf(idx, "symbol index")
+    }
+
+    pub fn dyn_entries(&self) -> Result<&[Dyn]> {
+        let sh = self.section_header_by_name(b".dynamic")?;
+        let data = self.section_content(sh)?;
+
+        load_slice(data, data.len() / mem::size_of::<Dyn>())
+    }
+
+    pub fn dyn_entry_by_tag(&self, tag: u64) -> Result<&Dyn> {
+        self.dyn_entries()?
+            .iter()
+            .find(|dy| dy.tag == tag)
+            .ok_or(ElfParseError::DynEntryNotFound(DynamicTag(tag)))
+    }
+
+    pub fn dyn_content(&self, addr: u64, size: u64) -> Result<&[u8]> {
+        self.data
+            .get_elf(addr.., "dyn content offset")?
+            .get_elf(..size, "section size")
     }
 }
 

@@ -2,8 +2,8 @@ use std::{fmt::Display, fs::File};
 
 use anyhow::Context;
 use elven_parser::{
-    consts::{ShType, RX86_64},
-    defs::Elf,
+    consts::{DynamicTag, ShType, RX86_64},
+    defs::{Addr, Elf},
     ElfParseError,
 };
 use memmap2::Mmap;
@@ -40,6 +40,12 @@ struct RelaTable {
     addend: u64,
 }
 
+#[derive(Tabled)]
+struct DynTable {
+    tag: DynamicTag,
+    value: Addr,
+}
+
 fn print_file(path: &str) -> anyhow::Result<()> {
     println!("{path}");
 
@@ -59,7 +65,7 @@ fn print_file(path: &str) -> anyhow::Result<()> {
         HeaderTable("osabi", &ident.osabi),
         HeaderTable("type", &header.r#type),
         HeaderTable("machine", &header.machine),
-        HeaderTable("entrypoint (hex)", &header.entry),
+        HeaderTable("entrypoint", &header.entry),
     ];
 
     let mut table = Table::new(header_tab);
@@ -90,8 +96,10 @@ fn print_file(path: &str) -> anyhow::Result<()> {
         .relas()?
         .map(|(sh, rela)| {
             let section = elf.sh_string(sh.name)?.to_string();
+
             let sym = elf.symbol(rela.info.sym())?;
             let symbol = elf.string(sym.name)?.to_string();
+
             let offset = rela.offset.0;
             let r#type = elven_parser::consts::RX86_64(rela.info.r#type());
             let addend = rela.addend;
@@ -107,6 +115,16 @@ fn print_file(path: &str) -> anyhow::Result<()> {
         .collect::<Result<Vec<_>, ElfParseError>>()?;
 
     print_table(Table::new(relas));
+
+    if let Ok(dyns) = elf.dyn_entries() {
+        println!("\nDynamic entries");
+
+        let dyns = dyns.iter().map(|dy| DynTable {
+            tag: dy.tag,
+            value: Addr(dy.val),
+        });
+        print_table(Table::new(dyns));
+    }
 
     println!();
 

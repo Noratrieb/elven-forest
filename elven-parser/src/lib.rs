@@ -1,3 +1,5 @@
+use consts::{DynamicTag, ShType};
+
 pub mod consts;
 pub mod defs;
 mod idx;
@@ -20,10 +22,12 @@ pub enum ElfParseError {
     IndexOutOfBounds(&'static str, usize),
     #[error("String in string table does not end with a nul terminator: String offset: {0}")]
     NoStringNulTerm(usize),
-    #[error("The SHT_SYMTAB section was not found")]
-    SymtabNotFound,
+    #[error("The {0} section was not found")]
+    SectionTypeNotFound(ShType),
     #[error("The section with the name {0:?} was not found")]
     SectionNotFound(std::result::Result<String, Vec<u8>>),
+    #[error("Dynamic entry not found: {0}")]
+    DynEntryNotFound(DynamicTag),
 }
 
 pub type Result<T> = std::result::Result<T, ElfParseError>;
