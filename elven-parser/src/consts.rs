@@ -27,6 +27,18 @@ macro_rules! const_group_with_fmt {
             }
         }
 
+        impl std::fmt::Display for $struct_name {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                match self.0 {
+                    $(
+                        $value => f.write_str(stringify!($name)),
+                    )*
+                    a => write!(f, "{}({a})", $group_name)
+                }
+            }
+        }
+
+
         impl PartialEq<$ty> for $struct_name {
             fn eq(&self, other: &$ty) -> bool {
                 self.0 == *other

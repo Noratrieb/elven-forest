@@ -1,2 +1,2 @@
 [workspace]
-members = ["elven-parser"]
+members = ["elven-parser", "elven-forest"]

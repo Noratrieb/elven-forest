@@ -9,14 +9,26 @@ use crate::{
 };
 use bstr::BStr;
 
-use std::{fmt::Debug, mem, string};
+use std::{fmt::{Debug, Display}, mem, string};
 
 use bytemuck::{Pod, PodCastError, Zeroable};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Zeroable, Pod)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Zeroable, Pod)]
 #[repr(transparent)]
 
 pub struct Addr(pub u64);
+
+impl Debug for Addr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:x}", self.0)
+    }
+}
+
+impl Display for Addr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:x}", self.0)
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Zeroable, Pod)]
 #[repr(transparent)]
