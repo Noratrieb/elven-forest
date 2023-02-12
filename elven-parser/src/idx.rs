@@ -3,7 +3,7 @@ use std::{
     slice::SliceIndex,
 };
 
-use crate::{ElfParseError, Result};
+use crate::read::{ElfReadError, Result};
 
 macro_rules! define_idx {
     (
@@ -95,6 +95,6 @@ impl<T> ElfIndexExt for [T] {
     ) -> Result<&<I::SliceIdx as SliceIndex<Self>>::Output> {
         let bound = idx.bound();
         self.get(idx.to_slice_idx())
-            .ok_or(ElfParseError::IndexOutOfBounds(msg, bound))
+            .ok_or(ElfReadError::IndexOutOfBounds(msg, bound))
     }
 }

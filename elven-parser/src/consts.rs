@@ -124,14 +124,18 @@ pub const EI_PAD: usize = 9; /* Byte index of padding bytes */
 
 pub const EI_NIDENT: usize = 16;
 
-pub const ET_NONE: u16 = 0;
-pub const ET_REL: u16 = 1;
-pub const ET_EXEC: u16 = 2;
-pub const ET_DYN: u16 = 3;
-pub const ET_CORE: u16 = 4;
+const_group_with_fmt! {
+    pub struct Type(u16): "type"
+
+    pub const ET_NONE = 0;
+    pub const ET_REL = 1;
+    pub const ET_EXEC = 2;
+    pub const ET_DYN = 3;
+    pub const ET_CORE = 4;
+}
 
 const_group_with_fmt! {
-    pub struct Machine(u16): "Machine"
+    pub struct Machine(u16): "machine"
 
     pub const EM_NONE = 0; /* No machine */
     pub const EM_X86_64 = 62; /* AMD x86-64 architecture */

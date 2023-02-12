@@ -5,7 +5,6 @@
 use crate::{
     consts::{self as c, DynamicTag, ShType},
     idx::{define_idx, ElfIndexExt, ToIdxUsize},
-    ElfParseError, Result,
 };
 use bstr::BStr;
 
@@ -17,9 +16,36 @@ use std::{
 
 use bytemuck::{Pod, PodCastError, Zeroable};
 
+#[derive(Debug, Clone, thiserror::Error)]
+pub enum ElfReadError {
+    #[error("An index into {2} is out of bounds. Expected at least {0} bytes, found {1} bytes")]
+    RegionOutOfBounds(usize, usize, String),
+    #[error("The input is not aligned in memory. Expected align {0}, found align {1}")]
+    UnalignedInput(usize, usize),
+    #[error("The magic of the file did not match. Maybe it's not an ELF file?. Found {0:x?}")]
+    WrongMagic([u8; 4]),
+    #[error("A program header entry has a different size than expected. Expected {0}, found {1}")]
+    InvalidPhEntSize(usize, usize),
+    #[error("A section header entry has a different size than expected. Expected {0}, found {1}")]
+    InvalidShEntSize(usize, usize),
+    #[error("The string table section is marked as UNDEF")]
+    StrTableSectionNotPresent,
+    #[error("An index is out of bounds: {0}: {1}")]
+    IndexOutOfBounds(&'static str, usize),
+    #[error("String in string table does not end with a nul terminator: String offset: {0}")]
+    NoStringNulTerm(usize),
+    #[error("The {0} section was not found")]
+    SectionTypeNotFound(ShType),
+    #[error("The {0} with the name {1:?} was not found")]
+    NotFoundByName(&'static str, std::result::Result<String, Vec<u8>>),
+    #[error("Dynamic entry not found: {0}")]
+    DynEntryNotFound(DynamicTag),
+}
+
+pub type Result<T> = std::result::Result<T, ElfReadError>;
+
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Zeroable, Pod)]
 #[repr(transparent)]
-
 pub struct Addr(pub u64);
 
 impl Debug for Addr {
@@ -58,7 +84,7 @@ define_idx! {
 
 /// A raw ELF. Does not come with cute ears for now.
 #[derive(Debug, Clone, Copy)]
-pub struct Elf<'a> {
+pub struct ElfReader<'a> {
     pub data: &'a [u8],
 }
 
@@ -66,7 +92,7 @@ pub struct Elf<'a> {
 #[repr(C)]
 pub struct ElfHeader {
     pub ident: ElfIdent,
-    pub r#type: u16,
+    pub r#type: c::Type,
     pub machine: c::Machine,
     pub version: u32,
     pub entry: Addr,
@@ -79,6 +105,16 @@ pub struct ElfHeader {
     pub shentsize: u16,
     pub shnum: u16,
     pub shstrndex: c::SectionIdx,
+}
+
+pub(crate) const HEADER_ENTRY_OFFSET: usize = 24;
+
+#[test]
+fn elf_header_entry_offset() {
+    let mut header = ElfHeader::zeroed();
+    let buf = bytemuck::cast_mut::<ElfHeader, [u64; mem::size_of::<ElfHeader>() / 8]>(&mut header);
+    buf[HEADER_ENTRY_OFFSET / 8] = 0x001122334455667788;
+    assert_eq!(header.entry, Addr(0x001122334455667788));
 }
 
 #[derive(Debug, Clone, Copy, Zeroable, Pod)]
@@ -202,25 +238,25 @@ pub struct Dyn {
     pub val: u64,
 }
 
-impl<'a> Elf<'a> {
+impl<'a> ElfReader<'a> {
     pub fn new(data: &'a [u8]) -> Result<Self> {
         let magic = data[..c::SELFMAG].try_into().map_err(|_| {
             let mut padded = [0, 0, 0, 0];
             padded.copy_from_slice(data);
-            ElfParseError::WrongMagic(padded)
+            ElfReadError::WrongMagic(padded)
         })?;
 
         if magic != *c::ELFMAG {
-            return Err(ElfParseError::WrongMagic(magic));
+            return Err(ElfReadError::WrongMagic(magic));
         }
 
-        let elf = Elf { data };
+        let elf = ElfReader { data };
 
         Ok(elf)
     }
 
     pub fn header(&self) -> Result<&ElfHeader> {
-        load_ref(self.data)
+        load_ref(self.data, "header")
     }
 
     pub fn program_headers(&self) -> Result<&[Phdr]> {
@@ -233,7 +269,7 @@ impl<'a> Elf<'a> {
         let expected_ent_size = mem::size_of::<Phdr>();
         let actual_ent_size = usize::from(header.phentsize);
         if actual_ent_size != expected_ent_size {
-            return Err(ElfParseError::InvalidPhEntSize(
+            return Err(ElfReadError::InvalidPhEntSize(
                 expected_ent_size,
                 actual_ent_size,
             ));
@@ -242,6 +278,7 @@ impl<'a> Elf<'a> {
         load_slice(
             self.data.get_elf(header.phoff.., "program header offset")?,
             header.phnum.into(),
+            "program headers",
         )
     }
 
@@ -255,14 +292,15 @@ impl<'a> Elf<'a> {
         let expected_ent_size = mem::size_of::<Shdr>();
         let actual_ent_size = usize::from(header.shentsize);
         if actual_ent_size != expected_ent_size {
-            return Err(ElfParseError::InvalidPhEntSize(
+            return Err(ElfReadError::InvalidPhEntSize(
                 expected_ent_size,
                 actual_ent_size,
             ));
         }
         load_slice(
-            self.data.get_elf(header.shoff.., "sectoin header offset")?,
+            self.data.get_elf(header.shoff.., "section header offset")?,
             header.shnum.into(),
+            "section headers",
         )
     }
 
@@ -279,7 +317,8 @@ impl<'a> Elf<'a> {
             }
         }
         let name = name.to_vec();
-        Err(ElfParseError::SectionNotFound(
+        Err(ElfReadError::NotFoundByName(
+            "section",
             string::String::from_utf8(name).map_err(FromUtf8Error::into_bytes),
         ))
     }
@@ -288,7 +327,7 @@ impl<'a> Elf<'a> {
         self.section_headers()?
             .iter()
             .find(|sh| sh.r#type == ty)
-            .ok_or(ElfParseError::SectionTypeNotFound(ShType(ty)))
+            .ok_or(ElfReadError::SectionTypeNotFound(ShType(ty)))
     }
 
     pub fn section_content(&self, sh: &Shdr) -> Result<&[u8]> {
@@ -306,7 +345,7 @@ impl<'a> Elf<'a> {
         let shstrndex = header.shstrndex;
 
         if shstrndex == c::SHN_UNDEF {
-            return Err(ElfParseError::StrTableSectionNotPresent);
+            return Err(ElfReadError::StrTableSectionNotPresent);
         }
 
         if shstrndex >= c::SHN_LORESERVE {
@@ -334,7 +373,7 @@ impl<'a> Elf<'a> {
         let end = indexed
             .iter()
             .position(|&c| c == b'\0')
-            .ok_or(ElfParseError::NoStringNulTerm(idx.to_idx_usize()))?;
+            .ok_or(ElfReadError::NoStringNulTerm(idx.to_idx_usize()))?;
         Ok(BStr::new(&indexed[..end]))
     }
 
@@ -344,7 +383,7 @@ impl<'a> Elf<'a> {
         let end = indexed
             .iter()
             .position(|&c| c == b'\0')
-            .ok_or(ElfParseError::NoStringNulTerm(idx.to_idx_usize()))?;
+            .ok_or(ElfReadError::NoStringNulTerm(idx.to_idx_usize()))?;
         Ok(BStr::new(&indexed[..end]))
     }
 
@@ -361,7 +400,7 @@ impl<'a> Elf<'a> {
         let end = indexed
             .iter()
             .position(|&c| c == b'\0')
-            .ok_or(ElfParseError::NoStringNulTerm(idx.to_idx_usize()))?;
+            .ok_or(ElfReadError::NoStringNulTerm(idx.to_idx_usize()))?;
         Ok(BStr::new(&indexed[..end]))
     }
 
@@ -372,7 +411,11 @@ impl<'a> Elf<'a> {
             .filter(|sh| sh.r#type == c::SHT_RELA)
             .map(|sh| {
                 let content = self.section_content(sh)?;
-                let relas = load_slice::<Rela>(content, content.len() / mem::size_of::<Rela>())?;
+                let relas = load_slice::<Rela>(
+                    content,
+                    content.len() / mem::size_of::<Rela>(),
+                    "relocations",
+                )?;
                 Ok((sh, relas))
             })
             .collect::<Result<Vec<_>>>()?
@@ -385,11 +428,25 @@ impl<'a> Elf<'a> {
 
         let data = self.section_content(sh)?;
 
-        load_slice(data, data.len() / mem::size_of::<Sym>())
+        load_slice(data, data.len() / mem::size_of::<Sym>(), "symbols")
     }
 
     pub fn symbol(&self, idx: SymIdx) -> Result<&Sym> {
         self.symbols()?.get_elf(idx, "symbol index")
+    }
+
+    pub fn symbol_by_name(&self, name: &[u8]) -> Result<&Sym> {
+        for symbol in self.symbols()? {
+            let sym_name = self.string(symbol.name)?;
+            if sym_name == name {
+                return Ok(symbol);
+            }
+        }
+
+        Err(ElfReadError::NotFoundByName(
+            "symbol",
+            string::String::from_utf8(name.to_vec()).map_err(FromUtf8Error::into_bytes),
+        ))
     }
 
     pub fn dyn_symbols(&self) -> Result<&[Sym]> {
@@ -400,7 +457,7 @@ impl<'a> Elf<'a> {
 
         let data = self.dyn_content(addr.val, size.val)?;
 
-        load_slice(data, data.len() / mem::size_of::<Sym>())
+        load_slice(data, data.len() / mem::size_of::<Sym>(), "dyn symbols")
     }
 
     pub fn dyn_symbol(&self, idx: SymIdx) -> Result<&Sym> {
@@ -411,14 +468,14 @@ impl<'a> Elf<'a> {
         let sh = self.section_header_by_name(b".dynamic")?;
         let data = self.section_content(sh)?;
 
-        load_slice(data, data.len() / mem::size_of::<Dyn>())
+        load_slice(data, data.len() / mem::size_of::<Dyn>(), "dyn entries")
     }
 
     pub fn dyn_entry_by_tag(&self, tag: u64) -> Result<&Dyn> {
         self.dyn_entries()?
             .iter()
             .find(|dy| dy.tag == tag)
-            .ok_or(ElfParseError::DynEntryNotFound(DynamicTag(tag)))
+            .ok_or(ElfReadError::DynEntryNotFound(DynamicTag(tag)))
     }
 
     pub fn dyn_content(&self, addr: u64, size: u64) -> Result<&[u8]> {
@@ -428,16 +485,24 @@ impl<'a> Elf<'a> {
     }
 }
 
-fn load_ref<T: Pod>(data: &[u8]) -> Result<&T> {
-    load_slice(data, 1).map(|slice| &slice[0])
+fn load_ref<'a, T: Pod>(data: &'a [u8], kind: impl Into<String>) -> Result<&'a T> {
+    load_slice(data, 1, kind).map(|slice| &slice[0])
 }
 
-fn load_slice<T: Pod>(data: &[u8], amount_of_elems: usize) -> Result<&[T]> {
+fn load_slice<'a, T: Pod>(
+    data: &'a [u8],
+    amount_of_elems: usize,
+    kind: impl Into<String>,
+) -> Result<&'a [T]> {
     let size = mem::size_of::<T>() * amount_of_elems;
     let align = mem::align_of::<T>();
 
     if data.len() < size {
-        return Err(ElfParseError::FileTooSmall(size, data.len()));
+        return Err(ElfReadError::RegionOutOfBounds(
+            size,
+            data.len(),
+            kind.into(),
+        ));
     }
 
     let data_addr = (data as *const [u8]).cast::<u8>() as usize;
@@ -452,7 +517,7 @@ fn load_slice<T: Pod>(data: &[u8], amount_of_elems: usize) -> Result<&[T]> {
             unreachable!("already checked for these errors: {e}")
         }
         PodCastError::TargetAlignmentGreaterAndInputNotAligned => {
-            ElfParseError::UnalignedInput(align, data_align)
+            ElfReadError::UnalignedInput(align, data_align)
         }
     })
 }
@@ -485,7 +550,7 @@ mod tests {
     #[test]
     fn rust_hello_world_bin() -> super::Result<()> {
         let file = load_test_file("hello_world");
-        let elf = Elf::new(&file)?;
+        let elf = ElfReader::new(&file)?;
         let header = elf.header()?;
 
         assert_eq!(header.ident.class, c::ELFCLASS64);
@@ -507,8 +572,8 @@ mod tests {
 
     #[test]
     fn c_hello_world_object() -> super::Result<()> {
-        let file = load_test_file("hello_world_obj");
-        let elf = Elf::new(&file)?;
+        let file = load_test_file("hello_world_obj.o");
+        let elf = ElfReader::new(&file)?;
         let header = elf.header()?;
 
         assert_eq!(header.ident.class, c::ELFCLASS64);

@@ -3,8 +3,7 @@ use std::{fmt::Display, fs::File};
 use anyhow::Context;
 use elven_parser::{
     consts::{self as c, DynamicTag, ShType, SymbolVisibility, RX86_64},
-    defs::{Addr, Elf, Sym, SymInfo},
-    ElfParseError,
+    read::{Addr, ElfReadError, ElfReader, Sym, SymInfo},
 };
 use memmap2::Mmap;
 use tabled::{object::Rows, Disable, Style, Table, Tabled};
@@ -63,7 +62,7 @@ fn print_file(path: &str) -> anyhow::Result<()> {
     let file = File::open(path)?;
     let mmap = unsafe { Mmap::map(&file) }?;
 
-    let elf = Elf::new(&mmap)?;
+    let elf = ElfReader::new(&mmap)?;
 
     println!("\nHeader");
 
@@ -98,7 +97,7 @@ fn print_file(path: &str) -> anyhow::Result<()> {
                 offset: sh.offset.0,
             })
         })
-        .collect::<Result<Vec<_>, ElfParseError>>()?;
+        .collect::<Result<Vec<_>, ElfReadError>>()?;
 
     print_table(Table::new(sections));
 
@@ -125,7 +124,7 @@ fn print_file(path: &str) -> anyhow::Result<()> {
                 value: sym.value,
             })
         })
-        .collect::<Result<Vec<_>, ElfParseError>>()?;
+        .collect::<Result<Vec<_>, ElfReadError>>()?;
 
     print_table(Table::new(symbols));
 
@@ -152,7 +151,7 @@ fn print_file(path: &str) -> anyhow::Result<()> {
                 addend,
             })
         })
-        .collect::<Result<Vec<_>, ElfParseError>>()?;
+        .collect::<Result<Vec<_>, ElfReadError>>()?;
 
     print_table(Table::new(relas));
 
@@ -171,7 +170,7 @@ fn print_file(path: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn sym_display_name(elf: Elf<'_>, sym: &Sym) -> Result<String, ElfParseError> {
+fn sym_display_name(elf: ElfReader<'_>, sym: &Sym) -> Result<String, ElfReadError> {
     Ok(if sym.info.r#type() == c::STT_SECTION {
         elf.sh_string(elf.section_header(sym.shndx)?.name)?
             .to_string()
