@@ -125,7 +125,7 @@ pub const EI_PAD: usize = 9; /* Byte index of padding bytes */
 pub const EI_NIDENT: usize = 16;
 
 const_group_with_fmt! {
-    pub struct Type(u16): "type"
+    pub struct Type(u16): "ET"
 
     pub const ET_NONE = 0;
     pub const ET_REL = 1;
@@ -135,7 +135,7 @@ const_group_with_fmt! {
 }
 
 const_group_with_fmt! {
-    pub struct Machine(u16): "machine"
+    pub struct Machine(u16): "EM"
 
     pub const EM_NONE = 0; /* No machine */
     pub const EM_X86_64 = 62; /* AMD x86-64 architecture */
@@ -206,6 +206,37 @@ pub const SHT_LOOS: u32 = 0x60000000; /* Start OS-specific.  */
 pub const SHT_LOSUNW: u32 = 0x6ffffffa; /* Sun-specific low bound.  */
 pub const SHT_HISUNW: u32 = 0x6fffffff; /* Sun-specific high bound.  */
 pub const SHT_HIOS: u32 = 0x6fffffff; /* End OS-specific type */
+
+// ------------------
+// Program headers
+// ------------------
+
+const_group_with_fmt! {
+    pub struct PhType(u32): "PT"
+
+    pub const PT_NULL = 0; /* Program header table entry unused */
+    pub const PT_LOAD = 1; /* Loadable program segment */
+    pub const PT_DYNAMIC = 2; /* Dynamic linking information */
+    pub const PT_INTERP = 3; /* Program interpreter */
+    pub const PT_NOTE = 4; /* Auxiliary information */
+    pub const PT_SHLIB = 5; /* Reserved */
+    pub const PT_PHDR = 6; /* Entry for header table itself */
+    pub const PT_TLS = 7; /* Thread-local storage segment */
+    pub const PT_NUM = 8; /* Number of defined types */
+    pub const PT_GNU_EH_FRAME = 0x6474e550; /* GCC .eh_frame_hdr segment */
+    pub const PT_GNU_STACK = 0x6474e551; /* Indicates stack executability */
+    pub const PT_GNU_RELRO = 0x6474e552; /* Read-only after relocation */
+    pub const PT_GNU_PROPERTY = 0x6474e553; /* GNU property */
+    pub const PT_SUNWBSS = 0x6ffffffa; /* Sun Specific segment */
+    pub const PT_SUNWSTACK = 0x6ffffffb; /* Stack segment */
+    pub const PT_HISUNW = 0x6fffffff;
+}
+
+pub const PT_LOOS: u32 = 0x60000000; /* Start of OS-specific */
+pub const PT_LOSUNW: u32 = 0x6ffffffa;
+pub const PT_HIOS: u32 = 0x6fffffff; /* End of OS-specific */
+pub const PT_LOPROC: u32 = 0x70000000; /* Start of processor-specific */
+pub const PT_HIPROC: u32 = 0x7fffffff; /* End of processor-specific */
 
 // ------------------
 // Symbols

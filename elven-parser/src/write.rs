@@ -17,7 +17,7 @@ pub type Result<T> = std::result::Result<T, WriteElfError>;
 #[derive(Debug, Clone)]
 pub struct ElfWriter {
     header: read::ElfHeader,
-    entry: Entry,
+    entry: SectionRelativeAbsoluteAddr,
     sections_headers: Vec<Section>,
     programs_headers: Vec<ProgramHeader>,
 }
@@ -30,7 +30,7 @@ pub struct Header {
 }
 
 #[derive(Debug, Clone)]
-pub struct Entry {
+pub struct SectionRelativeAbsoluteAddr {
     pub section: SectionIdx,
     pub rel_offset: Offset,
 }
@@ -45,9 +45,7 @@ pub struct Section {
 }
 
 #[derive(Debug, Clone)]
-pub struct ProgramHeader {
-    pub content: Vec<u8>,
-}
+pub struct ProgramHeader {}
 
 const SH_STRTAB: usize = 1;
 
@@ -58,15 +56,15 @@ impl ElfWriter {
             r#type: header.r#type,
             machine: header.machine,
             version: 1,
-            entry: Addr(u64::MAX),
+            entry: Addr(0x3333333333333333),
             phoff: Offset(0),
             shoff: Offset(0),
             flags: u32::MAX,
-            ehsize: size_of::<read::ElfHeader> as u16,
+            ehsize: size_of::<read::ElfHeader>() as u16,
             phentsize: size_of::<read::Phdr>() as u16,
-            phnum: u16::MAX,
+            phnum: 0x3333,
             shentsize: size_of::<read::Shdr>() as u16,
-            shnum: u16::MAX,
+            shnum: 0x3333,
             // Set below.
             shstrndex: SectionIdx(SH_STRTAB as u16),
         };
@@ -92,7 +90,7 @@ impl ElfWriter {
 
         Self {
             header,
-            entry: Entry {
+            entry: SectionRelativeAbsoluteAddr {
                 section: SectionIdx(0),
                 rel_offset: Offset(0),
             },
@@ -101,7 +99,7 @@ impl ElfWriter {
         }
     }
 
-    pub fn set_entry(&mut self, entry: Entry) {
+    pub fn set_entry(&mut self, entry: SectionRelativeAbsoluteAddr) {
         self.entry = entry;
     }
 

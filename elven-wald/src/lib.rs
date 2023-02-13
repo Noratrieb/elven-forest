@@ -6,7 +6,7 @@ use clap::Parser;
 use elven_parser::{
     consts::{self as c, ShType, SHT_PROGBITS},
     read::{ElfIdent, ElfReader, Offset},
-    write::{self, ElfWriter, Entry, Section},
+    write::{self, ElfWriter, SectionRelativeAbsoluteAddr, Section},
 };
 use memmap2::Mmap;
 use std::{
@@ -60,7 +60,7 @@ pub fn run(opts: Opts) -> Result<()> {
 
     let section = _start_sym.shndx;
 
-    let entry = Entry {
+    let entry = SectionRelativeAbsoluteAddr {
         section,
         rel_offset: Offset(_start_sym.value.0),
     };
@@ -70,7 +70,7 @@ pub fn run(opts: Opts) -> Result<()> {
     Ok(())
 }
 
-fn write_output(text: &[u8], entry: Entry) -> Result<()> {
+fn write_output(text: &[u8], entry: SectionRelativeAbsoluteAddr) -> Result<()> {
     let ident = ElfIdent {
         magic: *c::ELFMAG,
         class: c::Class(c::ELFCLASS64),
@@ -83,7 +83,7 @@ fn write_output(text: &[u8], entry: Entry) -> Result<()> {
 
     let header = write::Header {
         ident,
-        r#type: c::Type(c::ET_DYN),
+        r#type: c::Type(c::ET_EXEC),
         machine: c::Machine(c::EM_X86_64),
     };
 

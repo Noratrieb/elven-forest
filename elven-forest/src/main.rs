@@ -2,8 +2,8 @@ use std::{fmt::Display, fs::File};
 
 use anyhow::Context;
 use elven_parser::{
-    consts::{self as c, DynamicTag, ShType, SymbolVisibility, RX86_64},
-    read::{Addr, ElfReadError, ElfReader, Sym, SymInfo},
+    consts::{self as c, DynamicTag, PhType, ShType, SymbolVisibility, RX86_64},
+    read::{Addr, ElfReadError, ElfReader, Offset, Sym, SymInfo},
 };
 use memmap2::Mmap;
 use tabled::{object::Rows, Disable, Style, Table, Tabled};
@@ -26,8 +26,23 @@ struct SectionTable {
     name: String,
     #[tabled(rename = "type")]
     r#type: ShType,
-    size: u64,
-    offset: u64,
+    size: Addr,
+    offset: Addr,
+}
+
+#[derive(Tabled)]
+struct ProgramHeaderTable {
+    #[tabled(rename = "type")]
+    r#type: PhType,
+    flags: u32,
+    offset: Addr,
+    virtual_addr: Addr,
+    phys_addr: Addr,
+    file_size: Addr,
+    mem_size: Addr,
+    align: Addr,
+    inside_section: String,
+    inside_section_offset: Addr,
 }
 
 #[derive(Tabled)]
@@ -76,6 +91,9 @@ fn print_file(path: &str) -> anyhow::Result<()> {
         HeaderTable("type", &header.r#type),
         HeaderTable("machine", &header.machine),
         HeaderTable("entrypoint", &header.entry),
+        HeaderTable("header size", &header.ehsize),
+        HeaderTable("program header size", &header.phentsize),
+        HeaderTable("section header size", &header.shentsize),
     ];
 
     let mut table = Table::new(header_tab);
@@ -93,8 +111,33 @@ fn print_file(path: &str) -> anyhow::Result<()> {
             Ok(SectionTable {
                 name,
                 r#type: sh.r#type,
-                size: sh.size,
-                offset: sh.offset.0,
+                size: Addr(sh.size),
+                offset: Addr(sh.offset.0),
+            })
+        })
+        .collect::<Result<Vec<_>, ElfReadError>>()?;
+
+    print_table(Table::new(sections));
+
+    println!("\nProgram headers");
+
+    let sections = elf
+        .program_headers()?
+        .iter()
+        .map(|ph| {
+            let (inside_section, inside_section_offset) = section_name_of_offset(elf, ph.offset)?;
+
+            Ok(ProgramHeaderTable {
+                r#type: ph.r#type,
+                flags: ph.flags,
+                offset: Addr(ph.offset.0),
+                virtual_addr: ph.vaddr,
+                phys_addr: ph.paddr,
+                file_size: Addr(ph.filesz),
+                mem_size: Addr(ph.memsz),
+                align: Addr(ph.align),
+                inside_section,
+                inside_section_offset: Addr(inside_section_offset),
             })
         })
         .collect::<Result<Vec<_>, ElfReadError>>()?;
@@ -168,6 +211,23 @@ fn print_file(path: &str) -> anyhow::Result<()> {
     println!();
 
     Ok(())
+}
+
+fn section_name_of_offset(elf: ElfReader<'_>, addr: Offset) -> Result<(String, u64), ElfReadError> {
+    let addr = addr.0;
+    for sh in elf.section_headers()?.iter() {
+        let range = sh.offset.0..(sh.offset.0 + sh.size);
+        if range.contains(&addr) {
+            let name = sh.name;
+            let name = elf.sh_string(name)?;
+
+            let offset = addr - sh.offset.0;
+
+            return Ok((name.to_string(), offset));
+        }
+    }
+
+    Ok((String::new(), addr))
 }
 
 fn sym_display_name(elf: ElfReader<'_>, sym: &Sym) -> Result<String, ElfReadError> {

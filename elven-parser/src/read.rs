@@ -134,7 +134,7 @@ const _: [u8; c::EI_NIDENT] = [0; mem::size_of::<ElfIdent>()];
 #[derive(Debug, Clone, Copy, Zeroable, Pod)]
 #[repr(C)]
 pub struct Phdr {
-    pub r#type: u32,
+    pub r#type: c::PhType,
     pub flags: u32,
     pub offset: Offset,
     pub vaddr: Addr,
