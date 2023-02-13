@@ -1,6 +1,11 @@
 #![allow(non_upper_case_globals)]
 #![allow(clippy::unreadable_literal)]
 
+use std::fmt::Display;
+
+use bitflags::bitflags;
+use bytemuck::{Pod, Zeroable};
+
 macro_rules! const_group_with_fmt {
     (
         pub struct $struct_name:ident($ty:ty): $group_name:literal
@@ -61,6 +66,19 @@ macro_rules! const_group_with_fmt {
         impl PartialOrd<$struct_name> for $ty {
             fn partial_cmp(&self, other: &$struct_name) -> Option<std::cmp::Ordering> {
                 self.partial_cmp(&other.0)
+            }
+        }
+        
+        impl From<$ty> for $struct_name {
+            fn from(ty: $ty) -> $struct_name {
+                $struct_name(ty)
+            }
+        }
+
+                
+        impl From<$struct_name> for $ty {
+            fn from(wrap: $struct_name) -> $ty {
+                wrap.0
             }
         }
     };
@@ -237,6 +255,22 @@ pub const PT_LOSUNW: u32 = 0x6ffffffa;
 pub const PT_HIOS: u32 = 0x6fffffff; /* End of OS-specific */
 pub const PT_LOPROC: u32 = 0x70000000; /* Start of processor-specific */
 pub const PT_HIPROC: u32 = 0x7fffffff; /* End of processor-specific */
+
+bitflags! {
+    #[derive(Zeroable, Pod)]
+    #[repr(transparent)]
+    pub struct PhFlags: u32 {
+        const PF_X = (1 << 0);	/* Segment is executable */
+        const PF_W = (1 << 1);	/* Segment is writable */
+        const PF_R = (1 << 2);	/* Segment is readable */
+    }
+}
+
+impl Display for PhFlags {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
 
 // ------------------
 // Symbols

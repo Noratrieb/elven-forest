@@ -107,7 +107,7 @@ pub struct ElfHeader {
     pub shstrndex: c::SectionIdx,
 }
 
-pub(crate) const HEADER_ENTRY_OFFSET: usize = 24;
+pub const HEADER_ENTRY_OFFSET: usize = 24;
 
 #[test]
 fn elf_header_entry_offset() {
@@ -135,7 +135,7 @@ const _: [u8; c::EI_NIDENT] = [0; mem::size_of::<ElfIdent>()];
 #[repr(C)]
 pub struct Phdr {
     pub r#type: c::PhType,
-    pub flags: u32,
+    pub flags: c::PhFlags,
     pub offset: Offset,
     pub vaddr: Addr,
     pub paddr: Addr,
@@ -489,7 +489,7 @@ fn load_ref<'a, T: Pod>(data: &'a [u8], kind: impl Into<String>) -> Result<&'a T
     load_slice(data, 1, kind).map(|slice| &slice[0])
 }
 
-fn load_slice<'a, T: Pod>(
+pub(crate) fn load_slice<'a, T: Pod>(
     data: &'a [u8],
     amount_of_elems: usize,
     kind: impl Into<String>,

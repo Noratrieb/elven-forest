@@ -4,9 +4,9 @@ extern crate tracing;
 use anyhow::{bail, Context, Result};
 use clap::Parser;
 use elven_parser::{
-    consts::{self as c, ShType, SHT_PROGBITS},
-    read::{ElfIdent, ElfReader, Offset},
-    write::{self, ElfWriter, SectionRelativeAbsoluteAddr, Section},
+    consts::{self as c, PhFlags, SectionIdx, ShType, PT_LOAD, SHT_PROGBITS},
+    read::{Addr, ElfIdent, ElfReader, Offset},
+    write::{self, ElfWriter, ProgramHeader, Section, SectionRelativeAbsoluteAddr},
 };
 use memmap2::Mmap;
 use std::{
@@ -58,19 +58,15 @@ pub fn run(opts: Opts) -> Result<()> {
 
     let _start_sym = elf.symbol_by_name(b"_start")?;
 
-    let section = _start_sym.shndx;
-
-    let entry = SectionRelativeAbsoluteAddr {
-        section,
-        rel_offset: Offset(_start_sym.value.0),
-    };
-
-    write_output(text_content, entry)?;
+    write_output(text_content, _start_sym.value.0)?;
 
     Ok(())
 }
 
-fn write_output(text: &[u8], entry: SectionRelativeAbsoluteAddr) -> Result<()> {
+pub const BASE_EXEC_ADDR: Addr = Addr(0x400000); // whatever ld does
+pub const DEFAULT_PROGRAM_HEADER_ALIGN_THAT_LD_USES_HERE: u64 = 0x1000;
+
+fn write_output(text: &[u8], entry_offset_from_text: u64) -> Result<()> {
     let ident = ElfIdent {
         magic: *c::ELFMAG,
         class: c::Class(c::ELFCLASS64),
@@ -90,15 +86,51 @@ fn write_output(text: &[u8], entry: SectionRelativeAbsoluteAddr) -> Result<()> {
     let mut write = ElfWriter::new(header);
 
     let text_name = write.add_sh_string(b".text");
-    write.add_section(Section {
+    let text_section = write.add_section(Section {
         name: text_name,
         r#type: ShType(SHT_PROGBITS),
         flags: 0,
         fixed_entsize: None,
         content: text.to_vec(),
-    });
+    })?;
 
-    write.set_entry(entry);
+    let elf_header_and_program_headers = ProgramHeader {
+        r#type: PT_LOAD.into(),
+        flags: PhFlags::PF_R,
+        offset: SectionRelativeAbsoluteAddr {
+            section: SectionIdx(0),
+            rel_offset: Offset(0),
+        },
+        vaddr: BASE_EXEC_ADDR,
+        paddr: BASE_EXEC_ADDR,
+        filesz: 176, // FIXME: Do not hardocde this lol
+        memsz: 176,
+        align: DEFAULT_PROGRAM_HEADER_ALIGN_THAT_LD_USES_HERE,
+    };
+
+    write.add_program_header(elf_header_and_program_headers);
+
+    let entry_addr = Addr(
+        BASE_EXEC_ADDR.0 + DEFAULT_PROGRAM_HEADER_ALIGN_THAT_LD_USES_HERE + entry_offset_from_text,
+    );
+
+    let text_program_header = ProgramHeader {
+        r#type: PT_LOAD.into(),
+        flags: PhFlags::PF_X | PhFlags::PF_R,
+        offset: SectionRelativeAbsoluteAddr {
+            section: text_section,
+            rel_offset: Offset(0),
+        },
+        vaddr: entry_addr,
+        paddr: entry_addr,
+        filesz: text.len() as u64,
+        memsz: text.len() as u64,
+        align: DEFAULT_PROGRAM_HEADER_ALIGN_THAT_LD_USES_HERE,
+    };
+
+    write.add_program_header(text_program_header);
+
+    write.set_entry(entry_addr);
 
     let output = write.write().context("writing output file")?;
 

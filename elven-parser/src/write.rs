@@ -1,4 +1,4 @@
-use crate::consts::{Machine, SectionIdx, ShType, Type, SHT_NULL, SHT_STRTAB};
+use crate::consts::{Machine, PhFlags, PhType, SectionIdx, ShType, Type, SHT_NULL, SHT_STRTAB};
 use crate::read::{self, Addr, ElfIdent, Offset, ShStringIdx};
 use std::io;
 use std::mem::size_of;
@@ -17,8 +17,7 @@ pub type Result<T> = std::result::Result<T, WriteElfError>;
 #[derive(Debug, Clone)]
 pub struct ElfWriter {
     header: read::ElfHeader,
-    entry: SectionRelativeAbsoluteAddr,
-    sections_headers: Vec<Section>,
+    sections: Vec<Section>,
     programs_headers: Vec<ProgramHeader>,
 }
 
@@ -29,7 +28,7 @@ pub struct Header {
     pub machine: Machine,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct SectionRelativeAbsoluteAddr {
     pub section: SectionIdx,
     pub rel_offset: Offset,
@@ -45,7 +44,16 @@ pub struct Section {
 }
 
 #[derive(Debug, Clone)]
-pub struct ProgramHeader {}
+pub struct ProgramHeader {
+    pub r#type: PhType,
+    pub flags: PhFlags,
+    pub offset: SectionRelativeAbsoluteAddr,
+    pub vaddr: Addr,
+    pub paddr: Addr,
+    pub filesz: u64,
+    pub memsz: u64,
+    pub align: u64,
+}
 
 const SH_STRTAB: usize = 1;
 
@@ -90,39 +98,45 @@ impl ElfWriter {
 
         Self {
             header,
-            entry: SectionRelativeAbsoluteAddr {
-                section: SectionIdx(0),
-                rel_offset: Offset(0),
-            },
-            sections_headers: vec![null_section, shstrtab],
+            sections: vec![null_section, shstrtab],
             programs_headers: Vec::new(),
         }
     }
 
-    pub fn set_entry(&mut self, entry: SectionRelativeAbsoluteAddr) {
-        self.entry = entry;
+    pub fn set_entry(&mut self, entry: Addr) {
+        self.header.entry = entry;
     }
 
     pub fn add_sh_string(&mut self, content: &[u8]) -> ShStringIdx {
-        let shstrtab = &mut self.sections_headers[SH_STRTAB];
+        let shstrtab = &mut self.sections[SH_STRTAB];
         let idx = shstrtab.content.len();
         shstrtab.content.extend(content);
         shstrtab.content.push(0);
         ShStringIdx(idx as u32)
     }
 
-    pub fn add_section(&mut self, section: Section) {
-        self.sections_headers.push(section);
+    pub fn add_section(&mut self, section: Section) -> Result<SectionIdx> {
+        let len = self.sections.len();
+        self.sections.push(section);
+        Ok(SectionIdx(
+            len.try_into()
+                .map_err(|_| WriteElfError::TooMany("sections"))?,
+        ))
+    }
+
+    pub fn add_program_header(&mut self, ph: ProgramHeader) {
+        self.programs_headers.push(ph);
     }
 }
 
 mod writing {
     use bytemuck::Pod;
 
-    use crate::read::{Addr, ElfHeader, Offset, Shdr, HEADER_ENTRY_OFFSET};
+    use super::{ElfWriter, Result, WriteElfError};
+    use crate::read::{Addr, ElfHeader, Offset, Phdr, Shdr};
     use std::{io::Write, mem::size_of, num::NonZeroU64};
 
-    use super::{ElfWriter, Result, WriteElfError};
+    const SH_OFFSET_OFFSET: usize = memoffset::offset_of!(Shdr, offset);
 
     impl ElfWriter {
         pub fn write(&self) -> Result<Vec<u8>> {
@@ -133,7 +147,7 @@ mod writing {
             let mut header = self.header;
 
             header.shnum = self
-                .sections_headers
+                .sections
                 .len()
                 .try_into()
                 .map_err(|_| WriteElfError::TooMany("sections"))?;
@@ -147,25 +161,32 @@ mod writing {
             // We know the size of the header.
             current_known_position += size_of::<ElfHeader>() as u64;
 
-            // We put the section headers directly after the header.
-            if !self.sections_headers.is_empty() {
-                header.shoff = Offset(current_known_position);
-            }
+            // ld orderes it ph/sh apparently so we will do the same
 
-            // There will be all the section headers right after the header.
-            current_known_position += (header.shentsize * header.shnum) as u64;
-
-            // We put the program headers directly after the section headers.
             if !self.programs_headers.is_empty() {
                 header.phoff = Offset(current_known_position);
             }
 
-            // There will be all the program headers right after the section headers.
-            current_known_position += (header.phentsize * header.phnum) as u64;
+            // There will be all the program headers right after the header.
+            let program_headers_start = current_known_position;
+            let all_ph_size = (header.phentsize as u64) * (header.phnum as u64);
+            current_known_position += all_ph_size;
+
+            if !self.sections.is_empty() {
+                header.shoff = Offset(current_known_position);
+            }
+
+            // There will be all the section headers right after the program headers.
+            let section_headers_start = current_known_position;
+            let section_headers_size = header.shentsize as u64 * header.shnum as u64;
+            current_known_position += section_headers_size;
 
             write_pod(&header, &mut output);
 
-            for (sh_idx, section) in self.sections_headers.iter().enumerate() {
+            // Reserve some space for the program headers
+            output.extend(std::iter::repeat(0).take(all_ph_size as usize));
+
+            for section in &self.sections {
                 let header = Shdr {
                     name: section.name,
                     r#type: section.r#type,
@@ -179,14 +200,6 @@ mod writing {
                     entsize: section.fixed_entsize.map(NonZeroU64::get).unwrap_or(0),
                 };
 
-                if sh_idx == self.entry.section.0 as usize {
-                    let base = current_known_position;
-                    let entry = base + self.entry.rel_offset.0;
-                    let entry_pos = &mut output[HEADER_ENTRY_OFFSET..][..size_of::<u64>()];
-                    let entry_ref = bytemuck::cast_slice_mut::<u8, u64>(entry_pos);
-                    entry_ref[0] = entry;
-                }
-
                 // We will write the content for this section at that offset and also make sure to align the next one.
                 // FIXME: Align to the alignment of the next section.
                 current_known_position += align_up(section.content.len() as u64, 8);
@@ -194,9 +207,7 @@ mod writing {
                 write_pod(&header, &mut output);
             }
 
-            assert_eq!(self.programs_headers.len(), 0); // FIXME: yeah
-
-            for section in &self.sections_headers {
+            for section in &self.sections {
                 let section_size = section.content.len() as u64;
                 let aligned_size = align_up(section_size, 8);
                 let padding = aligned_size - section_size;
@@ -205,6 +216,42 @@ mod writing {
                 for _ in 0..padding {
                     output.write_all(&[0u8])?;
                 }
+            }
+
+            // We know have a few clues about section offsets, so write the program headers.
+            for (i, program_header) in self.programs_headers.iter().enumerate() {
+                let rel_offset = program_header.offset;
+                let section_base_offset = section_headers_start as usize
+                    + header.shentsize as usize * rel_offset.section.0 as usize;
+
+                let section_offset_offset = section_base_offset + SH_OFFSET_OFFSET;
+                let section_content_offset_bytes = output[section_offset_offset..]
+                    [..size_of::<u64>()]
+                    .try_into()
+                    .unwrap();
+                let section_content_offset = u64::from_ne_bytes(section_content_offset_bytes);
+
+                let offset = Offset(section_content_offset + rel_offset.rel_offset.0);
+
+                let ph = Phdr {
+                    r#type: program_header.r#type,
+                    flags: program_header.flags,
+                    offset,
+                    vaddr: program_header.vaddr,
+                    paddr: program_header.paddr,
+                    filesz: program_header.filesz,
+                    memsz: program_header.memsz,
+                    align: program_header.align,
+                };
+
+                let program_header_start =
+                    program_headers_start as usize + header.phentsize as usize * i as usize;
+                let space = &mut output[program_header_start..][..header.phentsize as usize];
+                let ph_bytes = bytemuck::cast_slice::<Phdr, u8>(std::slice::from_ref(&ph));
+
+                space.copy_from_slice(ph_bytes);
+
+                write_pod(&ph, &mut output);
             }
 
             Ok(output)

@@ -2,7 +2,7 @@ use std::{fmt::Display, fs::File};
 
 use anyhow::Context;
 use elven_parser::{
-    consts::{self as c, DynamicTag, PhType, ShType, SymbolVisibility, RX86_64},
+    consts::{self as c, DynamicTag, PhFlags, PhType, ShType, SymbolVisibility, RX86_64},
     read::{Addr, ElfReadError, ElfReader, Offset, Sym, SymInfo},
 };
 use memmap2::Mmap;
@@ -34,7 +34,7 @@ struct SectionTable {
 struct ProgramHeaderTable {
     #[tabled(rename = "type")]
     r#type: PhType,
-    flags: u32,
+    flags: PhFlags,
     offset: Addr,
     virtual_addr: Addr,
     phys_addr: Addr,
