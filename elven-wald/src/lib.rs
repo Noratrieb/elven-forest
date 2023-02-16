@@ -5,8 +5,9 @@ use anyhow::{bail, Context, Result};
 use clap::Parser;
 use elven_parser::{
     consts::{self as c, PhFlags, SectionIdx, ShFlags, ShType, PT_LOAD, SHT_PROGBITS},
-    read::{Addr, ElfIdent, ElfReader, Offset},
+    read::{ElfIdent, ElfReader},
     write::{self, ElfWriter, ProgramHeader, Section, SectionRelativeAbsoluteAddr},
+    Addr, Offset,
 };
 use memmap2::Mmap;
 use std::{

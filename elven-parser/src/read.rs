@@ -5,6 +5,7 @@
 use crate::{
     consts::{self as c, DynamicTag, ShType},
     idx::{define_idx, ElfIndexExt, ToIdxUsize},
+    Addr, Offset,
 };
 use bstr::BStr;
 
@@ -44,32 +45,6 @@ pub enum ElfReadError {
 
 pub type Result<T> = std::result::Result<T, ElfReadError>;
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Zeroable, Pod)]
-#[repr(transparent)]
-pub struct Addr(pub u64);
-
-impl Debug for Addr {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "0x{:x}", self.0)
-    }
-}
-
-impl Display for Addr {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "0x{:x}", self.0)
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Zeroable, Pod)]
-#[repr(transparent)]
-pub struct Offset(pub u64);
-
-impl ToIdxUsize for Offset {
-    fn to_idx_usize(self) -> usize {
-        self.0.to_idx_usize()
-    }
-}
-
 define_idx! {
     pub struct ShStringIdx(u32);
 }
@@ -105,16 +80,6 @@ pub struct ElfHeader {
     pub shentsize: u16,
     pub shnum: u16,
     pub shstrndex: c::SectionIdx,
-}
-
-pub const HEADER_ENTRY_OFFSET: usize = 24;
-
-#[test]
-fn elf_header_entry_offset() {
-    let mut header = ElfHeader::zeroed();
-    let buf = bytemuck::cast_mut::<ElfHeader, [u64; mem::size_of::<ElfHeader>() / 8]>(&mut header);
-    buf[HEADER_ENTRY_OFFSET / 8] = 0x001122334455667788;
-    assert_eq!(header.entry, Addr(0x001122334455667788));
 }
 
 #[derive(Debug, Clone, Copy, Zeroable, Pod)]

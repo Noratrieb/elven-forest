@@ -3,7 +3,8 @@ use std::{fmt::Display, fs::File};
 use anyhow::Context;
 use elven_parser::{
     consts::{self as c, DynamicTag, PhFlags, PhType, ShFlags, ShType, SymbolVisibility, RX86_64},
-    read::{Addr, ElfReadError, ElfReader, Offset, Sym, SymInfo},
+    read::{ElfReadError, ElfReader, Sym, SymInfo},
+    Addr, Offset,
 };
 use memmap2::Mmap;
 use tabled::{object::Rows, Disable, Style, Table, Tabled};
@@ -21,13 +22,16 @@ fn main() -> anyhow::Result<()> {
 #[derive(Tabled)]
 struct HeaderTable<'a>(&'static str, &'a dyn Display);
 
+// Not really an addr but just display it as hex.
+type Hex = Addr;
+
 #[derive(Tabled)]
 struct SectionTable {
     name: String,
     #[tabled(rename = "type")]
     r#type: ShType,
-    size: Addr,
-    offset: Addr,
+    size: Hex,
+    offset: Offset,
     flags: ShFlags,
 }
 
@@ -36,14 +40,14 @@ struct ProgramHeaderTable {
     #[tabled(rename = "type")]
     r#type: PhType,
     flags: PhFlags,
-    offset: Addr,
+    offset: Offset,
     virtual_addr: Addr,
     phys_addr: Addr,
-    file_size: Addr,
-    mem_size: Addr,
-    align: Addr,
+    file_size: Hex,
+    mem_size: Hex,
+    align: Hex,
     inside_section: String,
-    inside_section_offset: Addr,
+    inside_section_offset: Offset,
 }
 
 #[derive(Tabled)]
@@ -113,7 +117,7 @@ fn print_file(path: &str) -> anyhow::Result<()> {
                 name,
                 r#type: sh.r#type,
                 size: Addr(sh.size),
-                offset: Addr(sh.offset.0),
+                offset: sh.offset,
                 flags: sh.flags,
             })
         })
@@ -132,14 +136,14 @@ fn print_file(path: &str) -> anyhow::Result<()> {
             Ok(ProgramHeaderTable {
                 r#type: ph.r#type,
                 flags: ph.flags,
-                offset: Addr(ph.offset.0),
+                offset: ph.offset,
                 virtual_addr: ph.vaddr,
                 phys_addr: ph.paddr,
                 file_size: Addr(ph.filesz),
                 mem_size: Addr(ph.memsz),
                 align: Addr(ph.align),
                 inside_section,
-                inside_section_offset: Addr(inside_section_offset),
+                inside_section_offset: Offset(inside_section_offset),
             })
         })
         .collect::<Result<Vec<_>, ElfReadError>>()?;

@@ -3,7 +3,8 @@ use bytemuck::Pod;
 use crate::consts::{
     Machine, PhFlags, PhType, SectionIdx, ShFlags, ShType, Type, SHT_NULL, SHT_STRTAB,
 };
-use crate::read::{self, Addr, ElfHeader, ElfIdent, Offset, Phdr, ShStringIdx, Shdr};
+use crate::read::{self, ElfHeader, ElfIdent, Phdr, ShStringIdx, Shdr};
+use crate::{Addr, Offset};
 use std::io::Write;
 use std::mem::size_of;
 use std::num::NonZeroU64;
@@ -355,7 +356,7 @@ fn align_up(n: u64, align: u64) -> u64 {
     let next_down = n - masked; // 0b0100
     let ret = next_down + align; // 0b0110
     debug_assert!(ret >= n);
-    debug_assert!(ret & align == 0);
+    debug_assert!(ret & required_mask == 0);
     ret
 }
 
