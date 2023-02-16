@@ -188,7 +188,7 @@ fn print_file(path: &str) -> anyhow::Result<()> {
 
             let symbol = sym_display_name(elf, sym)?;
 
-            let offset = Addr(rela.offset.0);
+            let offset = rela.offset;
             let r#type = c::RX86_64(rela.info.r#type());
             let addend = rela.addend;
 

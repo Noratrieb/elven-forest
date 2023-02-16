@@ -59,7 +59,7 @@ pub fn run(opts: Opts) -> Result<()> {
 
     let _start_sym = elf.symbol_by_name(b"_start")?;
 
-    write_output(text_content, _start_sym.value.0)?;
+    write_output(text_content, _start_sym.value)?;
 
     Ok(())
 }
@@ -67,7 +67,7 @@ pub fn run(opts: Opts) -> Result<()> {
 pub const BASE_EXEC_ADDR: Addr = Addr(0x400000); // whatever ld does
 pub const DEFAULT_PROGRAM_HEADER_ALIGN_THAT_LD_USES_HERE: u64 = 0x1000;
 
-fn write_output(text: &[u8], entry_offset_from_text: u64) -> Result<()> {
+fn write_output(text: &[u8], entry_offset_from_text: Addr) -> Result<()> {
     let ident = ElfIdent {
         magic: *c::ELFMAG,
         class: c::Class(c::ELFCLASS64),
@@ -112,9 +112,8 @@ fn write_output(text: &[u8], entry_offset_from_text: u64) -> Result<()> {
 
     write.add_program_header(elf_header_and_program_headers);
 
-    let entry_addr = Addr(
-        BASE_EXEC_ADDR.0 + DEFAULT_PROGRAM_HEADER_ALIGN_THAT_LD_USES_HERE + entry_offset_from_text,
-    );
+    let entry_addr =
+        BASE_EXEC_ADDR + DEFAULT_PROGRAM_HEADER_ALIGN_THAT_LD_USES_HERE + entry_offset_from_text;
 
     let text_program_header = ProgramHeader {
         r#type: PT_LOAD.into(),
