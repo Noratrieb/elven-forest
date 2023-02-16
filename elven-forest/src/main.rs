@@ -143,7 +143,7 @@ fn print_file(path: &str) -> anyhow::Result<()> {
                 mem_size: Addr(ph.memsz),
                 align: Addr(ph.align),
                 inside_section,
-                inside_section_offset: Offset(inside_section_offset),
+                inside_section_offset,
             })
         })
         .collect::<Result<Vec<_>, ElfReadError>>()?;
@@ -219,21 +219,23 @@ fn print_file(path: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn section_name_of_offset(elf: ElfReader<'_>, addr: Offset) -> Result<(String, u64), ElfReadError> {
-    let addr = addr.0;
+fn section_name_of_offset(
+    elf: ElfReader<'_>,
+    offset: Offset,
+) -> Result<(String, Offset), ElfReadError> {
     for sh in elf.section_headers()?.iter() {
-        let range = sh.offset.0..(sh.offset.0 + sh.size);
-        if range.contains(&addr) {
+        let range = sh.offset..(sh.offset + sh.size);
+        if range.contains(&offset) {
             let name = sh.name;
             let name = elf.sh_string(name)?;
 
-            let offset = addr - sh.offset.0;
+            let offset = offset - sh.offset;
 
             return Ok((name.to_string(), offset));
         }
     }
 
-    Ok((String::new(), addr))
+    Ok((String::new(), offset))
 }
 
 fn sym_display_name(elf: ElfReader<'_>, sym: &Sym) -> Result<String, ElfReadError> {

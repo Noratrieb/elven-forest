@@ -147,19 +147,19 @@ struct Layout {
     // Section contents
     section_content_offsets: Vec<Offset>,
     // happy void
-    section_content_end_offset: usize,
+    section_content_end_offset: Offset,
 }
 
 impl Layout {
-    fn ph_offset(&self) -> usize {
-        mem::size_of::<ElfHeader>()
+    fn ph_offset(&self) -> Offset {
+        Offset(mem::size_of::<ElfHeader>() as u64)
     }
 
     fn phs_byte_size(&self) -> usize {
         self.ph_amount * size_of::<read::Phdr>()
     }
 
-    fn sh_offset(&self) -> usize {
+    fn sh_offset(&self) -> Offset {
         self.ph_offset() + self.phs_byte_size()
     }
 
@@ -167,7 +167,7 @@ impl Layout {
         self.sh_amount * size_of::<read::Shdr>()
     }
 
-    fn section_contents_offset(&self) -> usize {
+    fn section_contents_offset(&self) -> Offset {
         self.sh_offset() + self.shs_byte_size()
     }
 }
@@ -178,13 +178,13 @@ impl ElfWriter {
             sh_amount: self.sections.len(),
             ph_amount: self.programs_headers.len(),
             section_content_offsets: Vec::new(),
-            section_content_end_offset: 0,
+            section_content_end_offset: Offset(0),
         };
 
         // Calculate section offsets. Each section pads itself to something nice.
         // They are in order, no fancy layout algorithm.
 
-        let mut current_offset = layout.section_contents_offset() as u64;
+        let mut current_offset = layout.section_contents_offset();
 
         for section in self.sections.iter() {
             if section.content.len() == 0 {
@@ -199,15 +199,14 @@ impl ElfWriter {
 
             current_offset = offset;
 
-            layout.section_content_offsets.push(Offset(offset));
+            layout.section_content_offsets.push(offset);
 
-            current_offset += section.content.len() as u64;
+            current_offset += section.content.len();
         }
 
         debug_assert_eq!(self.sections.len(), layout.section_content_offsets.len());
 
-        layout.section_content_end_offset = layout.section_content_offsets.last().unwrap().0
-            as usize
+        layout.section_content_end_offset = *layout.section_content_offsets.last().unwrap()
             + self.sections.last().unwrap().content.len();
 
         layout
@@ -235,11 +234,11 @@ impl ElfWriter {
         // ld orderes it ph/sh apparently so we will do the same
 
         if !self.programs_headers.is_empty() {
-            header.phoff = Offset(layout.ph_offset() as u64);
+            header.phoff = layout.ph_offset();
         }
 
         if !self.sections.is_empty() {
-            header.shoff = Offset(layout.sh_offset() as u64);
+            header.shoff = layout.sh_offset();
         }
 
         write_pod(&header, &mut output);
@@ -250,7 +249,7 @@ impl ElfWriter {
             let section_content_offset =
                 layout.section_content_offsets[rel_offset.section.0 as usize];
 
-            let offset = Offset(section_content_offset.0 as u64 + rel_offset.rel_offset.0);
+            let offset = section_content_offset + rel_offset.rel_offset;
 
             let ph = Phdr {
                 r#type: program_header.r#type,
@@ -266,7 +265,7 @@ impl ElfWriter {
             write_pod(&ph, &mut output);
         }
 
-        assert_eq!(output.len(), layout.sh_offset());
+        assert_eq!(output.len(), layout.sh_offset().usize());
 
         let null_sh = Shdr {
             name: ShStringIdx(0),
@@ -300,15 +299,15 @@ impl ElfWriter {
             write_pod(&header, &mut output);
         }
 
-        assert_eq!(output.len(), layout.section_contents_offset());
+        assert_eq!(output.len(), layout.section_contents_offset().usize());
 
         for (i, section) in self.sections.iter().enumerate() {
             let section_size = section.content.len() as u64;
             if section_size != 0 {
                 let current_offest = output.len();
                 let supposed_offset = layout.section_content_offsets[i];
-                let pre_padding = supposed_offset.0 as usize - current_offest;
-                for _ in 0..pre_padding {
+                let pre_padding = supposed_offset - current_offest;
+                for _ in 0..pre_padding.u64() {
                     output.write_all(&[0u8])?;
                 }
 
@@ -316,12 +315,12 @@ impl ElfWriter {
             }
         }
 
-        assert_eq!(output.len(), layout.section_content_end_offset);
+        assert_eq!(output.len(), layout.section_content_end_offset.usize());
 
         if cfg!(debug_assertions) {
             for offset in &layout.section_content_offsets {
                 assert!(
-                    (offset.0 as usize) < output.len(),
+                    offset.usize() < output.len(),
                     "section offset is out of bounds: {offset:?}"
                 );
             }
@@ -342,7 +341,8 @@ fn write_pod_slice<T: Pod>(data: &[T], output: &mut Vec<u8>) {
 }
 
 /// Align a number `n` to `align`, increasing `n` if needed. `align` must be a power of two.
-fn align_up(n: u64, align: u64) -> u64 {
+fn align_up<T: Into<u64> + From<u64>>(n: T, align: u64) -> T {
+    let n = n.into();
     debug_assert!(align.is_power_of_two());
 
     // n=0b0101, align=0b0100
@@ -350,14 +350,14 @@ fn align_up(n: u64, align: u64) -> u64 {
     let masked = n & required_mask; // 0b0001
 
     if masked == 0 {
-        return n;
+        return n.into();
     }
 
     let next_down = n - masked; // 0b0100
     let ret = next_down + align; // 0b0110
     debug_assert!(ret >= n);
     debug_assert!(ret & required_mask == 0);
-    ret
+    ret.into()
 }
 
 #[cfg(test)]
@@ -366,14 +366,14 @@ mod tests {
 
     #[test]
     fn align_up_correct() {
-        assert_eq!(align_up(0b0101, 0b0010), 0b0110);
-        assert_eq!(align_up(16, 8), 16);
-        assert_eq!(align_up(15, 8), 16);
-        assert_eq!(align_up(14, 8), 16);
-        assert_eq!(align_up(11, 8), 16);
-        assert_eq!(align_up(10, 8), 16);
-        assert_eq!(align_up(9, 8), 16);
-        assert_eq!(align_up(8, 8), 8);
-        assert_eq!(align_up(0, 1), 0);
+        assert_eq!(align_up(0b0101_u64, 0b0010), 0b0110);
+        assert_eq!(align_up(16_u64, 8), 16);
+        assert_eq!(align_up(15_u64, 8), 16);
+        assert_eq!(align_up(14_u64, 8), 16);
+        assert_eq!(align_up(11_u64, 8), 16);
+        assert_eq!(align_up(10_u64, 8), 16);
+        assert_eq!(align_up(9_u64, 8), 16);
+        assert_eq!(align_up(8_u64, 8), 8);
+        assert_eq!(align_up(0_u64, 1), 0);
     }
 }
