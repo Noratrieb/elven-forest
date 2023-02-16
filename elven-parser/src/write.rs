@@ -1,6 +1,8 @@
 use bytemuck::Pod;
 
-use crate::consts::{Machine, PhFlags, PhType, SectionIdx, ShType, Type, SHT_NULL, SHT_STRTAB};
+use crate::consts::{
+    Machine, PhFlags, PhType, SectionIdx, ShFlags, ShType, Type, SHT_NULL, SHT_STRTAB,
+};
 use crate::read::{self, Addr, ElfHeader, ElfIdent, Offset, Phdr, ShStringIdx, Shdr};
 use std::io::Write;
 use std::mem::size_of;
@@ -41,7 +43,7 @@ pub struct SectionRelativeAbsoluteAddr {
 pub struct Section {
     pub name: read::ShStringIdx,
     pub r#type: ShType,
-    pub flags: u64,
+    pub flags: ShFlags,
     pub fixed_entsize: Option<NonZeroU64>,
     pub addr_align: Option<NonZeroU64>,
     pub content: Vec<u8>,
@@ -85,7 +87,7 @@ impl ElfWriter {
             // The null string.
             name: read::ShStringIdx(0),
             r#type: ShType(SHT_NULL),
-            flags: 0,
+            flags: ShFlags::empty(),
             content: Vec::new(),
             fixed_entsize: None,
             addr_align: None,
@@ -95,7 +97,7 @@ impl ElfWriter {
             // The first string which happens to be .shstrtab below.
             name: read::ShStringIdx(1),
             r#type: ShType(SHT_STRTAB),
-            flags: 0,
+            flags: ShFlags::empty(),
             // Set up the null string and also the .shstrtab, our section.
             content: b"\0.shstrtab\0".to_vec(),
             fixed_entsize: None,
@@ -268,7 +270,7 @@ impl ElfWriter {
         let null_sh = Shdr {
             name: ShStringIdx(0),
             r#type: ShType(SHT_NULL),
-            flags: 0,
+            flags: ShFlags::empty(),
             addr: Addr(0),
             offset: Offset(0),
             size: 0,
@@ -314,6 +316,15 @@ impl ElfWriter {
         }
 
         assert_eq!(output.len(), layout.section_content_end_offset);
+
+        if cfg!(debug_assertions) {
+            for offset in &layout.section_content_offsets {
+                assert!(
+                    (offset.0 as usize) < output.len(),
+                    "section offset is out of bounds: {offset:?}"
+                );
+            }
+        }
 
         Ok(output)
     }

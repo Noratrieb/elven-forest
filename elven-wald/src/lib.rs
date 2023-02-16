@@ -4,7 +4,7 @@ extern crate tracing;
 use anyhow::{bail, Context, Result};
 use clap::Parser;
 use elven_parser::{
-    consts::{self as c, PhFlags, SectionIdx, ShType, PT_LOAD, SHT_PROGBITS},
+    consts::{self as c, PhFlags, SectionIdx, ShFlags, ShType, PT_LOAD, SHT_PROGBITS},
     read::{Addr, ElfIdent, ElfReader, Offset},
     write::{self, ElfWriter, ProgramHeader, Section, SectionRelativeAbsoluteAddr},
 };
@@ -89,7 +89,7 @@ fn write_output(text: &[u8], entry_offset_from_text: u64) -> Result<()> {
     let text_section = write.add_section(Section {
         name: text_name,
         r#type: ShType(SHT_PROGBITS),
-        flags: 0,
+        flags: ShFlags::SHF_ALLOC | ShFlags::SHF_EXECINSTR,
         fixed_entsize: None,
         content: text.to_vec(),
         addr_align: None,

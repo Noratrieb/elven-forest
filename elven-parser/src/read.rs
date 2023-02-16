@@ -149,7 +149,7 @@ pub struct Phdr {
 pub struct Shdr {
     pub name: ShStringIdx,
     pub r#type: c::ShType,
-    pub flags: u64,
+    pub flags: c::ShFlags,
     pub addr: Addr,
     pub offset: Offset,
     pub size: u64,

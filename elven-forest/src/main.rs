@@ -2,7 +2,7 @@ use std::{fmt::Display, fs::File};
 
 use anyhow::Context;
 use elven_parser::{
-    consts::{self as c, DynamicTag, PhFlags, PhType, ShType, SymbolVisibility, RX86_64},
+    consts::{self as c, DynamicTag, PhFlags, PhType, ShFlags, ShType, SymbolVisibility, RX86_64},
     read::{Addr, ElfReadError, ElfReader, Offset, Sym, SymInfo},
 };
 use memmap2::Mmap;
@@ -28,6 +28,7 @@ struct SectionTable {
     r#type: ShType,
     size: Addr,
     offset: Addr,
+    flags: ShFlags,
 }
 
 #[derive(Tabled)]
@@ -113,6 +114,7 @@ fn print_file(path: &str) -> anyhow::Result<()> {
                 r#type: sh.r#type,
                 size: Addr(sh.size),
                 offset: Addr(sh.offset.0),
+                flags: sh.flags,
             })
         })
         .collect::<Result<Vec<_>, ElfReadError>>()?;

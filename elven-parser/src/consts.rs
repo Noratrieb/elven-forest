@@ -68,14 +68,14 @@ macro_rules! const_group_with_fmt {
                 self.partial_cmp(&other.0)
             }
         }
-        
+
         impl From<$ty> for $struct_name {
             fn from(ty: $ty) -> $struct_name {
                 $struct_name(ty)
             }
         }
 
-                
+
         impl From<$struct_name> for $ty {
             fn from(wrap: $struct_name) -> $ty {
                 wrap.0
@@ -225,6 +225,40 @@ pub const SHT_LOSUNW: u32 = 0x6ffffffa; /* Sun-specific low bound.  */
 pub const SHT_HISUNW: u32 = 0x6fffffff; /* Sun-specific high bound.  */
 pub const SHT_HIOS: u32 = 0x6fffffff; /* End OS-specific type */
 
+bitflags! {
+    #[derive(Zeroable, Pod)]
+    #[repr(transparent)]
+    pub struct ShFlags: u64 {
+        const SHF_WRITE =               (1 << 0);	/* Writable */
+        const SHF_ALLOC =               (1 << 1);	/* Occupies memory during execution */
+        const SHF_EXECINSTR =           (1 << 2);	/* Executable */
+        const SHF_MERGE =               (1 << 4);	/* Might be merged */
+        const SHF_STRINGS =             (1 << 5);	/* Contains nul-terminated strings */
+        const SHF_INFO_LINK =           (1 << 6);	/* `sh_info' contains SHT index */
+        const SHF_LINK_ORDER =          (1 << 7);	/* Preserve order after combining */
+        const SHF_OS_NONCONFORMING =    (1 << 8);	/* Non-standard OS specific handling required */
+        const SHF_GROUP =               (1 << 9);	/* Section is member of a group.  */
+        const SHF_TLS =                 (1 << 10);  /* Section hold thread-local data.  */
+        const SHF_COMPRESSED =          (1 << 11);	/* Section with compressed data. */
+        const SHF_GNU_RETAIN =          (1 << 21);  /* Not to be GCed by linker.  */
+        const SHF_ORDERED =             (1 << 30);	/* Special ordering requirement (Solaris).  */
+        const SHF_EXCLUDE =             (1 << 31);	/* Section is excluded unless referenced or allocated (Solaris).*/
+    }
+}
+
+pub const SHF_MASKOS: u64 = 0x0ff00000; /* OS-specific.  */
+pub const SHF_MASKPROC: u64 = 0xf0000000; /* Processor-specific */
+
+impl Display for ShFlags {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.is_empty() {
+            f.write_str("")
+        } else {
+            write!(f, "{:?}", self)
+        }
+    }
+}
+
 // ------------------
 // Program headers
 // ------------------
@@ -268,7 +302,11 @@ bitflags! {
 
 impl Display for PhFlags {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", self)
+        if self.is_empty() {
+            f.write_str("")
+        } else {
+            write!(f, "{:?}", self)
+        }
     }
 }
 
