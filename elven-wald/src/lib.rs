@@ -92,6 +92,7 @@ fn write_output(text: &[u8], entry_offset_from_text: u64) -> Result<()> {
         flags: 0,
         fixed_entsize: None,
         content: text.to_vec(),
+        addr_align: None,
     })?;
 
     let elf_header_and_program_headers = ProgramHeader {

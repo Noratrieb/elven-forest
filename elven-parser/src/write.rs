@@ -1,8 +1,11 @@
+use bytemuck::Pod;
+
 use crate::consts::{Machine, PhFlags, PhType, SectionIdx, ShType, Type, SHT_NULL, SHT_STRTAB};
-use crate::read::{self, Addr, ElfIdent, Offset, ShStringIdx};
-use std::io;
+use crate::read::{self, Addr, ElfHeader, ElfIdent, Offset, Phdr, ShStringIdx, Shdr};
+use std::io::Write;
 use std::mem::size_of;
 use std::num::NonZeroU64;
+use std::{io, mem};
 
 #[derive(Debug, thiserror::Error)]
 pub enum WriteElfError {
@@ -40,6 +43,7 @@ pub struct Section {
     pub r#type: ShType,
     pub flags: u64,
     pub fixed_entsize: Option<NonZeroU64>,
+    pub addr_align: Option<NonZeroU64>,
     pub content: Vec<u8>,
 }
 
@@ -84,6 +88,7 @@ impl ElfWriter {
             flags: 0,
             content: Vec::new(),
             fixed_entsize: None,
+            addr_align: None,
         };
 
         let shstrtab = Section {
@@ -94,6 +99,7 @@ impl ElfWriter {
             // Set up the null string and also the .shstrtab, our section.
             content: b"\0.shstrtab\0".to_vec(),
             fixed_entsize: None,
+            addr_align: None,
         };
 
         Self {
@@ -129,173 +135,233 @@ impl ElfWriter {
     }
 }
 
-mod writing {
-    use bytemuck::Pod;
+struct Layout {
+    // Header
+    // Program Headers
+    ph_amount: usize,
+    // Sections
+    sh_amount: usize,
+    // Section contents
+    section_content_offsets: Vec<Offset>,
+    // happy void
+    section_content_end_offset: usize,
+}
 
-    use super::{ElfWriter, Result, WriteElfError};
-    use crate::read::{Addr, ElfHeader, Offset, Phdr, Shdr};
-    use std::{io::Write, mem::size_of, num::NonZeroU64};
+impl Layout {
+    fn ph_offset(&self) -> usize {
+        mem::size_of::<ElfHeader>()
+    }
 
-    const SH_OFFSET_OFFSET: usize = memoffset::offset_of!(Shdr, offset);
+    fn phs_byte_size(&self) -> usize {
+        self.ph_amount * size_of::<read::Phdr>()
+    }
 
-    impl ElfWriter {
-        pub fn write(&self) -> Result<Vec<u8>> {
-            let mut output = Vec::new();
+    fn sh_offset(&self) -> usize {
+        self.ph_offset() + self.phs_byte_size()
+    }
 
-            let mut current_known_position = 0;
+    fn shs_byte_size(&self) -> usize {
+        self.sh_amount * size_of::<read::Shdr>()
+    }
 
-            let mut header = self.header;
+    fn section_contents_offset(&self) -> usize {
+        self.sh_offset() + self.shs_byte_size()
+    }
+}
 
-            header.shnum = self
-                .sections
-                .len()
-                .try_into()
-                .map_err(|_| WriteElfError::TooMany("sections"))?;
+impl ElfWriter {
+    fn layout(&self) -> Layout {
+        let mut layout = Layout {
+            sh_amount: self.sections.len(),
+            ph_amount: self.programs_headers.len(),
+            section_content_offsets: Vec::new(),
+            section_content_end_offset: 0,
+        };
 
-            header.phnum = self
-                .programs_headers
-                .len()
-                .try_into()
-                .map_err(|_| WriteElfError::TooMany("program headers"))?;
+        // Calculate section offsets. Each section pads itself to something nice.
+        // They are in order, no fancy layout algorithm.
 
-            // We know the size of the header.
-            current_known_position += size_of::<ElfHeader>() as u64;
+        let mut current_offset = layout.section_contents_offset() as u64;
 
-            // ld orderes it ph/sh apparently so we will do the same
-
-            if !self.programs_headers.is_empty() {
-                header.phoff = Offset(current_known_position);
+        for section in self.sections.iter() {
+            if section.content.len() == 0 {
+                layout.section_content_offsets.push(Offset(0));
+                continue;
             }
 
-            // There will be all the program headers right after the header.
-            let program_headers_start = current_known_position;
-            let all_ph_size = (header.phentsize as u64) * (header.phnum as u64);
-            current_known_position += all_ph_size;
+            let offset = align_up(
+                current_offset,
+                section.addr_align.map(NonZeroU64::get).unwrap_or(1),
+            );
 
-            if !self.sections.is_empty() {
-                header.shoff = Offset(current_known_position);
-            }
+            current_offset = offset;
 
-            // There will be all the section headers right after the program headers.
-            let section_headers_start = current_known_position;
-            let section_headers_size = header.shentsize as u64 * header.shnum as u64;
-            current_known_position += section_headers_size;
+            layout.section_content_offsets.push(Offset(offset));
+
+            current_offset += section.content.len() as u64;
+        }
+
+        debug_assert_eq!(self.sections.len(), layout.section_content_offsets.len());
+
+        layout.section_content_end_offset = layout.section_content_offsets.last().unwrap().0
+            as usize
+            + self.sections.last().unwrap().content.len();
+
+        layout
+    }
+
+    pub fn write(&self) -> Result<Vec<u8>> {
+        let mut output = Vec::new();
+
+        let mut header = self.header;
+
+        header.shnum = self
+            .sections
+            .len()
+            .try_into()
+            .map_err(|_| WriteElfError::TooMany("sections"))?;
+
+        header.phnum = self
+            .programs_headers
+            .len()
+            .try_into()
+            .map_err(|_| WriteElfError::TooMany("program headers"))?;
+
+        let layout = self.layout();
+
+        // ld orderes it ph/sh apparently so we will do the same
+
+        if !self.programs_headers.is_empty() {
+            header.phoff = Offset(layout.ph_offset() as u64);
+        }
+
+        if !self.sections.is_empty() {
+            header.shoff = Offset(layout.sh_offset() as u64);
+        }
+
+        write_pod(&header, &mut output);
+
+        // We know have a few clues about section offsets, so write the program headers.
+        for program_header in self.programs_headers.iter() {
+            let rel_offset = program_header.offset;
+            let section_content_offset =
+                layout.section_content_offsets[rel_offset.section.0 as usize];
+
+            let offset = Offset(section_content_offset.0 as u64 + rel_offset.rel_offset.0);
+
+            let ph = Phdr {
+                r#type: program_header.r#type,
+                flags: program_header.flags,
+                offset,
+                vaddr: program_header.vaddr,
+                paddr: program_header.paddr,
+                filesz: program_header.filesz,
+                memsz: program_header.memsz,
+                align: program_header.align,
+            };
+
+            write_pod(&ph, &mut output);
+        }
+
+        assert_eq!(output.len(), layout.sh_offset());
+
+        let null_sh = Shdr {
+            name: ShStringIdx(0),
+            r#type: ShType(SHT_NULL),
+            flags: 0,
+            addr: Addr(0),
+            offset: Offset(0),
+            size: 0,
+            link: 0,
+            info: 0,
+            addralign: 0,
+            entsize: 0,
+        };
+        write_pod(&null_sh, &mut output);
+
+        for (i, section) in self.sections.iter().enumerate().skip(1) {
+            let offset = layout.section_content_offsets[i];
+            let header = Shdr {
+                name: section.name,
+                r#type: section.r#type,
+                flags: section.flags,
+                addr: Addr(0),
+                offset,
+                size: section.content.len() as u64,
+                link: 0,
+                info: 0,
+                addralign: 0,
+                entsize: section.fixed_entsize.map(NonZeroU64::get).unwrap_or(0),
+            };
 
             write_pod(&header, &mut output);
+        }
 
-            // Reserve some space for the program headers
-            output.extend(std::iter::repeat(0).take(all_ph_size as usize));
+        assert_eq!(output.len(), layout.section_contents_offset());
 
-            for section in &self.sections {
-                let header = Shdr {
-                    name: section.name,
-                    r#type: section.r#type,
-                    flags: section.flags,
-                    addr: Addr(0),
-                    offset: Offset(current_known_position),
-                    size: section.content.len() as u64,
-                    link: 0,
-                    info: 0,
-                    addralign: 0,
-                    entsize: section.fixed_entsize.map(NonZeroU64::get).unwrap_or(0),
-                };
-
-                // We will write the content for this section at that offset and also make sure to align the next one.
-                // FIXME: Align to the alignment of the next section.
-                current_known_position += align_up(section.content.len() as u64, 8);
-
-                write_pod(&header, &mut output);
-            }
-
-            for section in &self.sections {
-                let section_size = section.content.len() as u64;
-                let aligned_size = align_up(section_size, 8);
-                let padding = aligned_size - section_size;
-
-                output.write_all(&section.content)?;
-                for _ in 0..padding {
+        for (i, section) in self.sections.iter().enumerate() {
+            let section_size = section.content.len() as u64;
+            if section_size != 0 {
+                let current_offest = output.len();
+                let supposed_offset = layout.section_content_offsets[i];
+                let pre_padding = supposed_offset.0 as usize - current_offest;
+                for _ in 0..pre_padding {
                     output.write_all(&[0u8])?;
                 }
+
+                output.write_all(&section.content)?;
             }
-
-            // We know have a few clues about section offsets, so write the program headers.
-            for (i, program_header) in self.programs_headers.iter().enumerate() {
-                let rel_offset = program_header.offset;
-                let section_base_offset = section_headers_start as usize
-                    + header.shentsize as usize * rel_offset.section.0 as usize;
-
-                let section_offset_offset = section_base_offset + SH_OFFSET_OFFSET;
-                let section_content_offset_bytes = output[section_offset_offset..]
-                    [..size_of::<u64>()]
-                    .try_into()
-                    .unwrap();
-                let section_content_offset = u64::from_ne_bytes(section_content_offset_bytes);
-
-                let offset = Offset(section_content_offset + rel_offset.rel_offset.0);
-
-                let ph = Phdr {
-                    r#type: program_header.r#type,
-                    flags: program_header.flags,
-                    offset,
-                    vaddr: program_header.vaddr,
-                    paddr: program_header.paddr,
-                    filesz: program_header.filesz,
-                    memsz: program_header.memsz,
-                    align: program_header.align,
-                };
-
-                let program_header_start =
-                    program_headers_start as usize + header.phentsize as usize * i as usize;
-                let space = &mut output[program_header_start..][..header.phentsize as usize];
-                let ph_bytes = bytemuck::cast_slice::<Phdr, u8>(std::slice::from_ref(&ph));
-
-                space.copy_from_slice(ph_bytes);
-
-                write_pod(&ph, &mut output);
-            }
-
-            Ok(output)
-        }
-    }
-
-    fn write_pod<T: Pod>(data: &T, output: &mut Vec<u8>) {
-        let data = std::slice::from_ref(data);
-        write_pod_slice(data, output);
-    }
-
-    fn write_pod_slice<T: Pod>(data: &[T], output: &mut Vec<u8>) {
-        let data = bytemuck::cast_slice::<T, u8>(data);
-        output.extend(data);
-    }
-
-    fn align_up(n: u64, align: u64) -> u64 {
-        // n=0b0101, align=0b0100
-        let required_mask = align - 1; // 0b0011
-        let masked = n & required_mask; // 0b0001
-
-        if masked == 0 {
-            return n;
         }
 
-        let next_down = n - masked; // 0b0100
-        next_down + align // 0b0110
+        assert_eq!(output.len(), layout.section_content_end_offset);
+
+        Ok(output)
+    }
+}
+
+fn write_pod<T: Pod>(data: &T, output: &mut Vec<u8>) {
+    let data = std::slice::from_ref(data);
+    write_pod_slice(data, output);
+}
+
+fn write_pod_slice<T: Pod>(data: &[T], output: &mut Vec<u8>) {
+    let data = bytemuck::cast_slice::<T, u8>(data);
+    output.extend(data);
+}
+
+/// Align a number `n` to `align`, increasing `n` if needed. `align` must be a power of two.
+fn align_up(n: u64, align: u64) -> u64 {
+    debug_assert!(align.is_power_of_two());
+
+    // n=0b0101, align=0b0100
+    let required_mask = align - 1; // 0b0011
+    let masked = n & required_mask; // 0b0001
+
+    if masked == 0 {
+        return n;
     }
 
-    #[cfg(test)]
-    mod tests {
-        use super::align_up;
+    let next_down = n - masked; // 0b0100
+    let ret = next_down + align; // 0b0110
+    debug_assert!(ret >= n);
+    debug_assert!(ret & align == 0);
+    ret
+}
 
-        #[test]
-        fn align_up_correct() {
-            assert_eq!(align_up(0b0101, 0b0010), 0b0110);
-            assert_eq!(align_up(16, 8), 16);
-            assert_eq!(align_up(15, 8), 16);
-            assert_eq!(align_up(14, 8), 16);
-            assert_eq!(align_up(11, 8), 16);
-            assert_eq!(align_up(10, 8), 16);
-            assert_eq!(align_up(9, 8), 16);
-            assert_eq!(align_up(8, 8), 8);
-            assert_eq!(align_up(0, 1), 0);
-        }
+#[cfg(test)]
+mod tests {
+    use super::align_up;
+
+    #[test]
+    fn align_up_correct() {
+        assert_eq!(align_up(0b0101, 0b0010), 0b0110);
+        assert_eq!(align_up(16, 8), 16);
+        assert_eq!(align_up(15, 8), 16);
+        assert_eq!(align_up(14, 8), 16);
+        assert_eq!(align_up(11, 8), 16);
+        assert_eq!(align_up(10, 8), 16);
+        assert_eq!(align_up(9, 8), 16);
+        assert_eq!(align_up(8, 8), 8);
+        assert_eq!(align_up(0, 1), 0);
     }
 }
