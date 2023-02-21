@@ -228,11 +228,11 @@ impl<'a> ElfReader<'a> {
         Ok(elf)
     }
 
-    pub fn header(&self) -> Result<&ElfHeader> {
+    pub fn header(&self) -> Result<&'a ElfHeader> {
         load_ref(self.data, "header")
     }
 
-    pub fn program_headers(&self) -> Result<&[Phdr]> {
+    pub fn program_headers(&self) -> Result<&'a [Phdr]> {
         let header = self.header()?;
 
         if header.phnum == 0 {
@@ -255,7 +255,7 @@ impl<'a> ElfReader<'a> {
         )
     }
 
-    pub fn section_headers(&self) -> Result<&[Shdr]> {
+    pub fn section_headers(&self) -> Result<&'a [Shdr]> {
         let header = self.header()?;
 
         if header.shnum == 0 {
@@ -277,12 +277,12 @@ impl<'a> ElfReader<'a> {
         )
     }
 
-    pub fn section_header(&self, idx: c::SectionIdx) -> Result<&Shdr> {
+    pub fn section_header(&self, idx: c::SectionIdx) -> Result<&'a Shdr> {
         let sections = self.section_headers()?;
         sections.get_elf(idx.usize(), "section number")
     }
 
-    pub fn section_header_by_name(&self, name: &[u8]) -> Result<&Shdr> {
+    pub fn section_header_by_name(&self, name: &[u8]) -> Result<&'a Shdr> {
         let sections = self.section_headers()?;
         for sh in sections {
             if self.sh_string(sh.name)? == name {
@@ -296,14 +296,14 @@ impl<'a> ElfReader<'a> {
         ))
     }
 
-    pub fn section_header_by_type(&self, ty: u32) -> Result<&Shdr> {
+    pub fn section_header_by_type(&self, ty: u32) -> Result<&'a Shdr> {
         self.section_headers()?
             .iter()
             .find(|sh| sh.r#type == ty)
             .ok_or(ElfReadError::SectionTypeNotFound(ShType(ty)))
     }
 
-    pub fn section_content(&self, sh: &Shdr) -> Result<&[u8]> {
+    pub fn section_content(&self, sh: &Shdr) -> Result<&'a [u8]> {
         if sh.r#type.0 == c::SHT_NOBITS {
             return Ok(&[]);
         }
@@ -313,7 +313,7 @@ impl<'a> ElfReader<'a> {
             .get_elf(..sh.size, "section size")
     }
 
-    pub fn sh_str_table(&self) -> Result<&[u8]> {
+    pub fn sh_str_table(&self) -> Result<&'a [u8]> {
         let header = self.header()?;
         let shstrndex = header.shstrndex;
 
@@ -335,12 +335,12 @@ impl<'a> ElfReader<'a> {
         self.section_content(strtab_header)
     }
 
-    pub fn str_table(&self) -> Result<&[u8]> {
+    pub fn str_table(&self) -> Result<&'a [u8]> {
         let sh = self.section_header_by_name(b".strtab")?;
         self.section_content(sh)
     }
 
-    pub fn sh_string(&self, idx: ShStringIdx) -> Result<&BStr> {
+    pub fn sh_string(&self, idx: ShStringIdx) -> Result<&'a BStr> {
         let str_table = self.sh_str_table()?;
         let indexed = str_table.get_elf(idx.., "string offset")?;
         let end = indexed
@@ -350,7 +350,7 @@ impl<'a> ElfReader<'a> {
         Ok(BStr::new(&indexed[..end]))
     }
 
-    pub fn string(&self, idx: StringIdx) -> Result<&BStr> {
+    pub fn string(&self, idx: StringIdx) -> Result<&'a BStr> {
         let str_table = self.str_table()?;
         let indexed = str_table.get_elf(idx.., "string offset")?;
         let end = indexed
@@ -360,7 +360,7 @@ impl<'a> ElfReader<'a> {
         Ok(BStr::new(&indexed[..end]))
     }
 
-    pub fn dyn_string(&self, idx: StringIdx) -> Result<&BStr> {
+    pub fn dyn_string(&self, idx: StringIdx) -> Result<&'a BStr> {
         let tab_addr = self.dyn_entry_by_tag(c::DT_STRTAB)?;
         let tab_sz = self.dyn_entry_by_tag(c::DT_STRSZ)?;
 
@@ -377,7 +377,7 @@ impl<'a> ElfReader<'a> {
         Ok(BStr::new(&indexed[..end]))
     }
 
-    pub fn relas(&self) -> Result<impl Iterator<Item = (&Shdr, &Rela)>> {
+    pub fn relas(&self) -> Result<impl Iterator<Item = (&'a Shdr, &'a Rela)>> {
         Ok(self
             .section_headers()?
             .iter()
@@ -396,7 +396,7 @@ impl<'a> ElfReader<'a> {
             .flat_map(|(sh, relas)| relas.iter().map(move |rela| (sh, rela))))
     }
 
-    pub fn symbols(&self) -> Result<&[Sym]> {
+    pub fn symbols(&self) -> Result<&'a [Sym]> {
         let sh = self.section_header_by_type(c::SHT_SYMTAB)?;
 
         let data = self.section_content(sh)?;
@@ -404,11 +404,11 @@ impl<'a> ElfReader<'a> {
         load_slice(data, data.len() / mem::size_of::<Sym>(), "symbols")
     }
 
-    pub fn symbol(&self, idx: SymIdx) -> Result<&Sym> {
+    pub fn symbol(&self, idx: SymIdx) -> Result<&'a Sym> {
         self.symbols()?.get_elf(idx, "symbol index")
     }
 
-    pub fn symbol_by_name(&self, name: &[u8]) -> Result<&Sym> {
+    pub fn symbol_by_name(&self, name: &[u8]) -> Result<&'a Sym> {
         for symbol in self.symbols()? {
             let sym_name = self.string(symbol.name)?;
             if sym_name == name {
@@ -422,7 +422,7 @@ impl<'a> ElfReader<'a> {
         ))
     }
 
-    pub fn dyn_symbols(&self) -> Result<&[Sym]> {
+    pub fn dyn_symbols(&self) -> Result<&'a [Sym]> {
         let addr = self.dyn_entry_by_tag(c::DT_SYMTAB)?;
         let size = self.dyn_entry_by_tag(c::DT_SYMENT)?;
 
@@ -433,25 +433,25 @@ impl<'a> ElfReader<'a> {
         load_slice(data, data.len() / mem::size_of::<Sym>(), "dyn symbols")
     }
 
-    pub fn dyn_symbol(&self, idx: SymIdx) -> Result<&Sym> {
+    pub fn dyn_symbol(&self, idx: SymIdx) -> Result<&'a Sym> {
         dbg!(self.dyn_symbols()?).get_elf(idx, "symbol index")
     }
 
-    pub fn dyn_entries(&self) -> Result<&[Dyn]> {
+    pub fn dyn_entries(&self) -> Result<&'a [Dyn]> {
         let sh = self.section_header_by_name(b".dynamic")?;
         let data = self.section_content(sh)?;
 
         load_slice(data, data.len() / mem::size_of::<Dyn>(), "dyn entries")
     }
 
-    pub fn dyn_entry_by_tag(&self, tag: u64) -> Result<&Dyn> {
+    pub fn dyn_entry_by_tag(&self, tag: u64) -> Result<&'a Dyn> {
         self.dyn_entries()?
             .iter()
             .find(|dy| dy.tag == tag)
             .ok_or(ElfReadError::DynEntryNotFound(DynamicTag(tag)))
     }
 
-    pub fn dyn_content(&self, addr: u64, size: u64) -> Result<&[u8]> {
+    pub fn dyn_content(&self, addr: u64, size: u64) -> Result<&'a [u8]> {
         self.data
             .get_elf(addr.., "dyn content offset")?
             .get_elf(..size, "section size")
