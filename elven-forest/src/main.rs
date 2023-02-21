@@ -1,6 +1,11 @@
-use std::{fmt::Display, fs::File};
+use std::{
+    fmt::Display,
+    fs::File,
+    path::{Path, PathBuf},
+};
 
 use anyhow::Context;
+use clap::Parser;
 use elven_parser::{
     consts::{self as c, DynamicTag, PhFlags, PhType, ShFlags, ShType, SymbolVisibility, RX86_64},
     read::{ElfReadError, ElfReader, Sym, SymInfo},
@@ -9,11 +14,29 @@ use elven_parser::{
 use memmap2::Mmap;
 use tabled::{object::Rows, Disable, Style, Table, Tabled};
 
-fn main() -> anyhow::Result<()> {
-    let objs = std::env::args().skip(1);
+#[derive(Parser)]
+struct Opts {
+    #[arg(long("file-header"), long("header"))]
+    header: bool,
+    #[arg(short('l'), long("program-headers"), long("segments"))]
+    program_headers: bool,
+    #[arg(short('S'), long("section-headers"), long("sections"))]
+    section_headers: bool,
+    #[arg(short('s'), long("symbols"), long("syms"))]
+    symbols: bool,
+    #[arg(short('r'), long("relocs"))]
+    relocs: bool,
+    /// Not in readelf.
+    #[arg(short('d'), long("dyns"))]
+    dyns: bool,
+    files: Vec<PathBuf>,
+}
 
-    for obj in objs {
-        print_file(&obj).with_context(|| format!("Failed to print {obj}"))?;
+fn main() -> anyhow::Result<()> {
+    let opts = Opts::parse();
+
+    for obj in &opts.files {
+        print_file(&opts, obj).with_context(|| format!("Failed to print {}", obj.display()))?;
     }
 
     Ok(())
@@ -76,142 +99,155 @@ struct DynTable {
     value: Addr,
 }
 
-fn print_file(path: &str) -> anyhow::Result<()> {
-    println!("{path}");
+fn print_file(opts: &Opts, path: &Path) -> anyhow::Result<()> {
+    println!("{}", path.display());
 
     let file = File::open(path)?;
     let mmap = unsafe { Mmap::map(&file) }?;
 
     let elf = ElfReader::new(&mmap)?;
 
-    println!("\nHeader");
+    if opts.header {
+        println!("\nHeader");
 
-    let header = elf.header()?;
-    let ident = header.ident;
-    let header_tab = vec![
-        HeaderTable("class", &ident.class),
-        HeaderTable("data", &ident.data),
-        HeaderTable("version", &ident.version),
-        HeaderTable("osabi", &ident.osabi),
-        HeaderTable("type", &header.r#type),
-        HeaderTable("machine", &header.machine),
-        HeaderTable("entrypoint", &header.entry),
-        HeaderTable("header size", &header.ehsize),
-        HeaderTable("program header size", &header.phentsize),
-        HeaderTable("section header size", &header.shentsize),
-    ];
+        let header = elf.header()?;
+        let ident = header.ident;
+        let header_tab = vec![
+            HeaderTable("class", &ident.class),
+            HeaderTable("data", &ident.data),
+            HeaderTable("version", &ident.version),
+            HeaderTable("osabi", &ident.osabi),
+            HeaderTable("type", &header.r#type),
+            HeaderTable("machine", &header.machine),
+            HeaderTable("entrypoint", &header.entry),
+            HeaderTable("header size", &header.ehsize),
+            HeaderTable("program header size", &header.phentsize),
+            HeaderTable("section header size", &header.shentsize),
+        ];
 
-    let mut table = Table::new(header_tab);
-    // No header
-    table.with(Disable::row(Rows::first()));
-    print_table(table);
+        let mut table = Table::new(header_tab);
+        // No header
+        table.with(Disable::row(Rows::first()));
+        print_table(table);
+    }
 
-    println!("\nSections");
+    if opts.section_headers {
+        println!("\nSections");
 
-    let sections = elf
-        .section_headers()?
-        .iter()
-        .map(|sh| {
-            let name = elf.sh_string(sh.name)?.to_string();
-            Ok(SectionTable {
-                name,
-                r#type: sh.r#type,
-                size: Addr(sh.size),
-                offset: sh.offset,
-                flags: sh.flags,
+        let sections = elf
+            .section_headers()?
+            .iter()
+            .map(|sh| {
+                let name = elf.sh_string(sh.name)?.to_string();
+                Ok(SectionTable {
+                    name,
+                    r#type: sh.r#type,
+                    size: Addr(sh.size),
+                    offset: sh.offset,
+                    flags: sh.flags,
+                })
             })
-        })
-        .collect::<Result<Vec<_>, ElfReadError>>()?;
+            .collect::<Result<Vec<_>, ElfReadError>>()?;
 
-    print_table(Table::new(sections));
+        print_table(Table::new(sections));
+    }
 
-    println!("\nProgram headers");
+    if opts.program_headers {
+        println!("\nProgram headers");
 
-    let sections = elf
-        .program_headers()?
-        .iter()
-        .map(|ph| {
-            let (inside_section, inside_section_offset) = section_name_of_offset(elf, ph.offset)?;
+        let sections = elf
+            .program_headers()?
+            .iter()
+            .map(|ph| {
+                let (inside_section, inside_section_offset) =
+                    section_name_of_offset(elf, ph.offset)?;
 
-            Ok(ProgramHeaderTable {
-                r#type: ph.r#type,
-                flags: ph.flags,
-                offset: ph.offset,
-                virtual_addr: ph.vaddr,
-                phys_addr: ph.paddr,
-                file_size: Addr(ph.filesz),
-                mem_size: Addr(ph.memsz),
-                align: Addr(ph.align),
-                inside_section,
-                inside_section_offset,
+                Ok(ProgramHeaderTable {
+                    r#type: ph.r#type,
+                    flags: ph.flags,
+                    offset: ph.offset,
+                    virtual_addr: ph.vaddr,
+                    phys_addr: ph.paddr,
+                    file_size: Addr(ph.filesz),
+                    mem_size: Addr(ph.memsz),
+                    align: Addr(ph.align),
+                    inside_section,
+                    inside_section_offset,
+                })
             })
-        })
-        .collect::<Result<Vec<_>, ElfReadError>>()?;
+            .collect::<Result<Vec<_>, ElfReadError>>()?;
 
-    print_table(Table::new(sections));
+        print_table(Table::new(sections));
+    }
 
-    println!("\nSymbols");
+    if opts.symbols {
+        println!("\nSymbols");
 
-    let symbols = elf
-        .symbols()?
-        .iter()
-        .map(|sym| {
-            let name = sym_display_name(elf, sym)?;
-            let section = match sym.shndx.0 {
-                c::SHN_ABS | c::SHN_COMMON => String::new(),
-                _ => elf
-                    .sh_string(elf.section_header(sym.shndx)?.name)?
-                    .to_string(),
-            };
+        let symbols = elf
+            .symbols()?
+            .iter()
+            .map(|sym| {
+                let name = sym_display_name(elf, sym)?;
+                let section = match sym.shndx.0 {
+                    c::SHN_ABS | c::SHN_COMMON => String::new(),
+                    _ => elf
+                        .sh_string(elf.section_header(sym.shndx)?.name)?
+                        .to_string(),
+                };
 
-            Ok(SymbolTable {
-                name,
-                info: sym.info,
-                other: sym.other,
-                section,
-                size: sym.size,
-                value: sym.value,
+                Ok(SymbolTable {
+                    name,
+                    info: sym.info,
+                    other: sym.other,
+                    section,
+                    size: sym.size,
+                    value: sym.value,
+                })
             })
-        })
-        .collect::<Result<Vec<_>, ElfReadError>>()?;
+            .collect::<Result<Vec<_>, ElfReadError>>()?;
 
-    print_table(Table::new(symbols));
+        print_table(Table::new(symbols));
+    }
 
-    println!("\nRelocations");
+    if opts.relocs {
+        println!("\nRelocations");
 
-    let relas = elf
-        .relas()?
-        .map(|(sh, rela)| {
-            let section = elf.sh_string(sh.name)?.to_string();
+        let relas = elf
+            .relas()?
+            .map(|(sh, rela)| {
+                let section = elf.sh_string(sh.name)?.to_string();
 
-            let sym = elf.symbol(rela.info.sym())?;
+                let sym = elf.symbol(rela.info.sym())?;
 
-            let symbol = sym_display_name(elf, sym)?;
+                let symbol = sym_display_name(elf, sym)?;
 
-            let offset = rela.offset;
-            let r#type = c::RX86_64(rela.info.r#type());
-            let addend = rela.addend;
+                let offset = rela.offset;
+                let r#type = c::RX86_64(rela.info.r#type());
+                let addend = rela.addend;
 
-            Ok(RelaTable {
-                section,
-                symbol,
-                offset,
-                r#type,
-                addend,
+                Ok(RelaTable {
+                    section,
+                    symbol,
+                    offset,
+                    r#type,
+                    addend,
+                })
             })
-        })
-        .collect::<Result<Vec<_>, ElfReadError>>()?;
+            .collect::<Result<Vec<_>, ElfReadError>>()?;
 
-    print_table(Table::new(relas));
+        print_table(Table::new(relas));
+    }
 
-    if let Ok(dyns) = elf.dyn_entries() {
-        println!("\nDynamic entries");
+    if opts.dyns {
+        if let Ok(dyns) = elf.dyn_entries() {
+            println!("\nDynamic entries");
 
-        let dyns = dyns.iter().map(|dy| DynTable {
-            tag: dy.tag,
-            value: Addr(dy.val),
-        });
-        print_table(Table::new(dyns));
+            let dyns = dyns.iter().map(|dy| DynTable {
+                tag: dy.tag,
+                value: Addr(dy.val),
+            });
+            print_table(Table::new(dyns));
+        }
     }
 
     println!();
