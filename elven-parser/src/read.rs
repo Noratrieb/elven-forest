@@ -19,6 +19,8 @@ use bytemuck::{Pod, PodCastError, Zeroable};
 
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum ElfReadError {
+    #[error("The file is too small for the header")]
+    FileTooSmall,
     #[error("An index into {2} is out of bounds. Expected at least {0} bytes, found {1} bytes")]
     RegionOutOfBounds(usize, usize, String),
     #[error("The input is not aligned in memory. Expected align {0}, found align {1}")]
@@ -204,7 +206,13 @@ pub struct Dyn {
 }
 
 impl<'a> ElfReader<'a> {
+    /// Create a new elf reader. This only checks the elf magic but doens't do any parsing.
+    /// The input slice `data` must be aligned to 8 bytes, otherwise the reader may panic later.
     pub fn new(data: &'a [u8]) -> Result<Self> {
+        if data.len() < mem::size_of::<ElfHeader>() {
+            return Err(ElfReadError::FileTooSmall);
+        }
+
         let magic = data[..c::SELFMAG].try_into().map_err(|_| {
             let mut padded = [0, 0, 0, 0];
             padded.copy_from_slice(data);
