@@ -18,6 +18,16 @@ pub const fn Addr(value: u64) -> Addr {
     Addr { value }
 }
 
+impl Addr {
+    pub fn usize(self) -> usize {
+        self.value.try_into().unwrap()
+    }
+
+    pub fn u64(self) -> u64 {
+        self.value
+    }
+}
+
 impl Debug for Addr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "0x{:x}", self.value)

@@ -1,3 +1,5 @@
+mod size;
+
 use std::{
     fmt::Display,
     fs::File,
@@ -29,6 +31,8 @@ struct Opts {
     /// Not in readelf.
     #[arg(short('d'), long("dyns"))]
     dyns: bool,
+    #[arg(long("text-bloat"))]
+    text_bloat: bool,
     files: Vec<PathBuf>,
 }
 
@@ -250,6 +254,10 @@ fn print_file(opts: &Opts, path: &Path) -> anyhow::Result<()> {
             });
             print_table(Table::new(dyns));
         }
+    }
+
+    if opts.text_bloat {
+        size::analyze_text_bloat(elf)?;
     }
 
     println!();
