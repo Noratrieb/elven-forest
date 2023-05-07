@@ -39,6 +39,10 @@ fn main() -> anyhow::Result<()> {
     let opts = Opts::parse();
 
     for obj in &opts.files {
+        if opts.files.len() > 1 {
+            println!("{}", obj.display());
+        }
+
         print_file(&opts, obj).with_context(|| format!("Failed to print {}", obj.display()))?;
     }
 
@@ -103,8 +107,6 @@ struct DynTable {
 }
 
 fn print_file(opts: &Opts, path: &Path) -> anyhow::Result<()> {
-    println!("{}", path.display());
-
     let file = File::open(path)?;
     let mmap = unsafe { Mmap::map(&file) }?;
 

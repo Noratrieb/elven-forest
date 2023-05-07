@@ -5,7 +5,6 @@ pub fn analyze_text_bloat(elf: ElfReader<'_>) -> Result<()> {
     let text = elf
         .section_header_by_name(b".text")
         .context(".text not found")?;
-    dbg!(text.size);
 
     let syms = elf.symbols().context("symbols not found")?;
 
@@ -49,23 +48,42 @@ fn symbol_components(sym: &str) -> Result<String> {
 
     if demangled.starts_with('<') {
         let qpath = parse_qpath(&demangled).context("invalid qpath")?;
+        let components = qpath_components(qpath)?;
 
         // qpath
-        return Ok(demangled);
+        return Ok(components.join(","));
     } else {
         // normal path
         let components = demangled.split("::").collect::<Vec<_>>();
-        let path = components.join(";");
+        let path = components.join(",");
         return Ok(path);
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 struct QPath<'a> {
     qself: &'a str,
     trait_: &'a str,
     pathy_bit: &'a str,
 }
+
+fn qpath_components(qpath: QPath<'_>) -> Result<Vec<&str>> {
+    if qpath.qself.starts_with('<') {
+        let sub_qpath = parse_qpath(qpath.qself)?;
+        let mut sub_components = qpath_components(sub_qpath)?;
+        sub_components.extend(qpath.pathy_bit.split("::"));
+        Ok(sub_components)
+    } else {
+        Ok(qpath
+            .qself
+            .split("::")
+            .chain(qpath.pathy_bit.split("::"))
+            .collect())
+    }
+}
+
+// FIXME: Apparently the symbol `std::os::linux::process::<impl core::convert::From<std::os::linux::process::PidFd> for std::os::fd::owned::OwnedFd>::from` exists in std
+// I have no clue what to do about that.
 
 fn parse_qpath(s: &str) -> Result<QPath<'_>> {
     let mut chars = s.char_indices().skip(1);
@@ -145,13 +163,13 @@ mod tests {
 
     #[test]
     fn path_debug_helper() {
-        // <<std::path::Components as core::fmt::Debug>::fmt::DebugHelper as core::fmt::Debug>::fmt::hc586615181f69e94
+        // <<std::path::Components as core::fmt::Debug>::fmt::DebugHelper as core::fmt::Debug>::fmt::h4f87ac80fb33df05
         let sym = "_ZN106_$LT$$LT$std..path..Iter$u20$as$u20$core..fmt..Debug$GT$..fmt..DebugHelper$u20$as$u20$core..fmt..Debug$GT$3fmt17h4f87ac80fb33df05E";
         let components = symbol_components(sym).unwrap();
 
         assert_eq!(
             components,
-            "std;path;Iter;fmt;DebugHelper;fmt;hc586615181f69e94"
+            "std,path,Iter,fmt,DebugHelper,fmt,h4f87ac80fb33df05"
         )
     }
 }
