@@ -1,7 +1,9 @@
+use std::borrow::Cow;
+
 use anyhow::{Context, Result};
 use elven_parser::read::ElfReader;
 
-pub fn analyze_text_bloat(elf: ElfReader<'_>) -> Result<()> {
+pub fn analyze_text_bloat(elf: ElfReader<'_>, csv: bool) -> Result<()> {
     let text = elf
         .section_header_by_name(b".text")
         .context(".text not found")?;
@@ -33,31 +35,66 @@ pub fn analyze_text_bloat(elf: ElfReader<'_>) -> Result<()> {
     symbol_sizes.sort_by_key(|&(_, size)| size);
     symbol_sizes.reverse();
 
-    for (sym, size) in symbol_sizes {
-        let components =
-            symbol_components(std::str::from_utf8(sym)?).with_context(|| sym.to_string())?;
+    let depth = 3;
 
+    if csv {
+        println!(
+            "size,{}",
+            (1..=depth)
+                .map(|x| x.to_string())
+                .collect::<Vec<_>>()
+                .join(",")
+        );
+    }
+
+    for (sym, size) in symbol_sizes {
+        let components = symbol_components(std::str::from_utf8(sym)?, depth, csv)
+            .with_context(|| sym.to_string())?;
+
+        if csv {
+            println!("{size},{components}");
+        } else {
+        }
         println!("{size} {components}");
     }
 
     Ok(())
 }
 
-fn symbol_components(sym: &str) -> Result<String> {
+fn symbol_components(sym: &str, depth: usize, csv: bool) -> Result<String> {
     let demangled = rustc_demangle::demangle(sym).to_string();
 
-    if demangled.starts_with('<') {
-        let qpath = parse_qpath(&demangled).context("invalid qpath")?;
-        let components = qpath_components(qpath)?;
+    if !csv {
+        return Ok(demangled);
+    }
 
-        // qpath
-        return Ok(components.join(","));
+    let mut components = if demangled.starts_with('<') {
+        let qpath = parse_qpath(&demangled).context("invalid qpath")?;
+        qpath_components(qpath)?
     } else {
         // normal path
-        let components = demangled.split("::").collect::<Vec<_>>();
-        let path = components.join(",");
-        return Ok(path);
+        demangled.split("::").collect::<Vec<_>>()
+    };
+
+    if components.len() >= depth {
+        components.truncate(depth);
+    } else {
+        components.extend(std::iter::repeat("").take(depth - components.len()));
     }
+
+    let components = components
+        .into_iter()
+        .map(|c| {
+            if c.contains(",") {
+                Cow::Owned(format!("\"{c}\""))
+            } else {
+                Cow::Borrowed(c)
+            }
+        })
+        .collect::<Vec<_>>();
+
+    // qpath
+    return Ok(components.join(","));
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -165,11 +202,8 @@ mod tests {
     fn path_debug_helper() {
         // <<std::path::Components as core::fmt::Debug>::fmt::DebugHelper as core::fmt::Debug>::fmt::h4f87ac80fb33df05
         let sym = "_ZN106_$LT$$LT$std..path..Iter$u20$as$u20$core..fmt..Debug$GT$..fmt..DebugHelper$u20$as$u20$core..fmt..Debug$GT$3fmt17h4f87ac80fb33df05E";
-        let components = symbol_components(sym).unwrap();
+        let components = symbol_components(sym, 6).unwrap();
 
-        assert_eq!(
-            components,
-            "std,path,Iter,fmt,DebugHelper,fmt,h4f87ac80fb33df05"
-        )
+        assert_eq!(components, "std,path,Iter,fmt,DebugHelper,fmt")
     }
 }

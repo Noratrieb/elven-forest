@@ -32,6 +32,8 @@ struct Opts {
     dyns: bool,
     #[arg(long("text-bloat"))]
     text_bloat: bool,
+    #[arg(long("csv"))]
+    csv: bool,
     files: Vec<PathBuf>,
 }
 
@@ -258,7 +260,7 @@ fn print_file(opts: &Opts, path: &Path) -> anyhow::Result<()> {
     }
 
     if opts.text_bloat {
-        size::analyze_text_bloat(elf)?;
+        size::analyze_text_bloat(elf, opts.csv)?;
     }
 
     println!();
