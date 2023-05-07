@@ -26,10 +26,10 @@ pub struct Opts {
 
 #[derive(Debug)]
 struct SymDef<'a> {
-    name: &'a BStr,
+    _name: &'a BStr,
     defined_in: u32,
     /// `shndx` from ELF
-    refers_to_section: SectionIdx,
+    _refers_to_section: SectionIdx,
 }
 
 struct LinkCtxt<'a> {
@@ -112,9 +112,9 @@ impl<'a> LinkCtxt<'a> {
                     }
                     Entry::Vacant(entry) => {
                         entry.insert(SymDef {
-                            name,
+                            _name: name,
                             defined_in: elf_idx as u32,
-                            refers_to_section: e_sym.shndx,
+                            _refers_to_section: e_sym.shndx,
                         });
                     }
                 }

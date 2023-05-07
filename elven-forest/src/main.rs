@@ -53,7 +53,7 @@ struct SectionTable {
     name: String,
     #[tabled(rename = "type")]
     r#type: ShType,
-    size: Hex,
+    size: u64,
     offset: Offset,
     flags: ShFlags,
 }
@@ -134,7 +134,7 @@ fn print_file(opts: &Opts, path: &Path) -> anyhow::Result<()> {
     if opts.section_headers {
         println!("\nSections");
 
-        let sections = elf
+        let mut sections = elf
             .section_headers()?
             .iter()
             .map(|sh| {
@@ -142,12 +142,14 @@ fn print_file(opts: &Opts, path: &Path) -> anyhow::Result<()> {
                 Ok(SectionTable {
                     name,
                     r#type: sh.r#type,
-                    size: Addr(sh.size),
+                    size: sh.size,
                     offset: sh.offset,
                     flags: sh.flags,
                 })
             })
             .collect::<Result<Vec<_>, ElfReadError>>()?;
+
+        sections.sort_by(|a, b| b.size.cmp(&a.size));
 
         print_table(Table::new(sections));
     }
