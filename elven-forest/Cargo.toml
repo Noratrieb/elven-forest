@@ -10,4 +10,5 @@ anyhow = "1.0.69"
 clap = { version = "4.1.6", features = ["derive"] }
 elven-parser = { path = "../elven-parser" }
 memmap2 = "0.5.8"
+rustc-demangle = { version = "0.1.23", features = ["std"] }
 tabled = "0.10.0"

@@ -1,10 +1,9 @@
-mod size;
-
 use std::{
     fmt::Display,
     fs::File,
     path::{Path, PathBuf},
 };
+mod size;
 
 use anyhow::Context;
 use clap::Parser;
