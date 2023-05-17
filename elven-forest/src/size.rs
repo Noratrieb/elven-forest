@@ -35,7 +35,7 @@ pub fn analyze_text_bloat(elf: ElfReader<'_>, csv: bool) -> Result<()> {
     symbol_sizes.sort_by_key(|&(_, size)| size);
     symbol_sizes.reverse();
 
-    let depth = 3;
+    let depth = 4;
 
     if csv {
         println!(
@@ -54,8 +54,8 @@ pub fn analyze_text_bloat(elf: ElfReader<'_>, csv: bool) -> Result<()> {
         if csv {
             println!("{size},{components}");
         } else {
+            println!("{size} {components}");
         }
-        println!("{size} {components}");
     }
 
     Ok(())
@@ -69,8 +69,10 @@ fn symbol_components(sym: &str, depth: usize, csv: bool) -> Result<String> {
     }
 
     let mut components = if demangled.starts_with('<') {
-        let qpath = parse_qpath(&demangled).context("invalid qpath")?;
-        qpath_components(qpath)?
+        parse_qpath(&demangled)
+            .context("invalid qpath")
+            .and_then(|qpath| qpath_components(qpath))
+            .unwrap_or_else(|_| demangled.split("::").collect::<Vec<_>>())
     } else {
         // normal path
         demangled.split("::").collect::<Vec<_>>()
@@ -79,7 +81,7 @@ fn symbol_components(sym: &str, depth: usize, csv: bool) -> Result<String> {
     if components.len() >= depth {
         components.truncate(depth);
     } else {
-        components.extend(std::iter::repeat("").take(depth - components.len()));
+        components.extend(std::iter::repeat("_").take(depth - components.len()));
     }
 
     let components = components
@@ -106,10 +108,17 @@ struct QPath<'a> {
 
 fn qpath_components(qpath: QPath<'_>) -> Result<Vec<&str>> {
     if qpath.qself.starts_with('<') {
-        let sub_qpath = parse_qpath(qpath.qself)?;
-        let mut sub_components = qpath_components(sub_qpath)?;
-        sub_components.extend(qpath.pathy_bit.split("::"));
-        Ok(sub_components)
+        if let Ok(sub_qpath) = parse_qpath(qpath.qself) {
+            let mut sub_components = qpath_components(sub_qpath)?;
+            sub_components.extend(qpath.pathy_bit.split("::"));
+            Ok(sub_components)
+        } else {
+            Ok(qpath
+                .qself
+                .split("::")
+                .chain(qpath.pathy_bit.split("::"))
+                .collect())
+        }
     } else {
         Ok(qpath
             .qself
@@ -202,7 +211,7 @@ mod tests {
     fn path_debug_helper() {
         // <<std::path::Components as core::fmt::Debug>::fmt::DebugHelper as core::fmt::Debug>::fmt::h4f87ac80fb33df05
         let sym = "_ZN106_$LT$$LT$std..path..Iter$u20$as$u20$core..fmt..Debug$GT$..fmt..DebugHelper$u20$as$u20$core..fmt..Debug$GT$3fmt17h4f87ac80fb33df05E";
-        let components = symbol_components(sym, 6).unwrap();
+        let components = symbol_components(sym, 6, true).unwrap();
 
         assert_eq!(components, "std,path,Iter,fmt,DebugHelper,fmt")
     }
