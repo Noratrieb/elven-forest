@@ -21,6 +21,8 @@ use std::{
 
 #[derive(Debug, Clone, Parser)]
 pub struct Opts {
+    #[clap(long, short, default_value = "a.out")]
+    pub output: PathBuf,
     pub objs: Vec<PathBuf>,
 }
 
@@ -82,7 +84,7 @@ pub fn run(opts: Opts) -> Result<()> {
 
     let _start_sym = cx.elves[0].symbol_by_name(b"_start")?;
 
-    write_output(text_content, _start_sym.value)?;
+    write_output(&opts, text_content, _start_sym.value)?;
 
     Ok(())
 }
@@ -125,7 +127,7 @@ impl<'a> LinkCtxt<'a> {
     }
 }
 
-fn write_output(text: &[u8], entry_offset_from_text: Addr) -> Result<()> {
+fn write_output(opts: &Opts, text: &[u8], entry_offset_from_text: Addr) -> Result<()> {
     let ident = ElfIdent {
         magic: *c::ELFMAG,
         class: c::Class(c::ELFCLASS64),
@@ -194,7 +196,7 @@ fn write_output(text: &[u8], entry_offset_from_text: Addr) -> Result<()> {
 
     let output = write.write().context("writing output file")?;
 
-    let mut output_file = fs::File::create("a.out").context("creating ./a.out")?;
+    let mut output_file = fs::File::create(&opts.output).context("creating ./a.out")?;
     BufWriter::new(&mut output_file).write_all(&output)?;
 
     make_file_executable(&output_file)?;
