@@ -1,3 +1,6 @@
+mod storage;
+mod utils;
+
 #[macro_use]
 extern crate tracing;
 
@@ -26,6 +29,14 @@ pub struct Opts {
     pub objs: Vec<PathBuf>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct FileId(usize);
+
+struct ElfFile<'a> {
+    id: FileId,
+    elf: ElfReader<'a>,
+}
+
 #[derive(Debug)]
 struct SymDef<'a> {
     _name: &'a BStr,
@@ -35,7 +46,7 @@ struct SymDef<'a> {
 }
 
 struct LinkCtxt<'a> {
-    elves: Vec<ElfReader<'a>>,
+    elves: Vec<ElfFile<'a>>,
     sym_defs: HashMap<&'a BStr, SymDef<'a>>,
 }
 
@@ -56,17 +67,18 @@ pub fn run(opts: Opts) -> Result<()> {
         bail!("you gotta supply at least one object file");
     }
 
-    if opts.objs.len() > 1 {
-        bail!("hey hey hey one stop back please. you want to link MULTIPLE files TOGETHER? im sorry i cant do that");
-    }
-
     info!(objs=?opts.objs, "Linking files");
 
     let elves = mmaps
         .iter()
         .zip(&opts.objs)
-        .map(|(mmap, path)| {
-            ElfReader::new(mmap).with_context(|| format!("parsing ELF file {}", path.display()))
+        .enumerate()
+        .map(|(idx, (mmap, path))| {
+            Ok(ElfFile {
+                id: FileId(idx),
+                elf: ElfReader::new(mmap)
+                    .with_context(|| format!("parsing ELF file {}", path.display()))?,
+            })
         })
         .collect::<Result<Vec<_>, anyhow::Error>>()?;
 
@@ -75,14 +87,19 @@ pub fn run(opts: Opts) -> Result<()> {
         sym_defs: HashMap::new(),
     };
 
+    let storage =
+        storage::allocate_storage(BASE_EXEC_ADDR, &cx.elves).context("while allocating storage")?;
+
+    dbg!(storage);
+
     cx.resolve()?;
 
     dbg!(cx.sym_defs);
 
-    let text_sh = cx.elves[0].section_header_by_name(b".text")?;
-    let text_content = cx.elves[0].section_content(text_sh)?;
+    let text_sh = cx.elves[0].elf.section_header_by_name(b".text")?;
+    let text_content = cx.elves[0].elf.section_content(text_sh)?;
 
-    let _start_sym = cx.elves[0].symbol_by_name(b"_start")?;
+    let _start_sym = cx.elves[0].elf.symbol_by_name(b"_start")?;
 
     write_output(&opts, text_content, _start_sym.value)?;
 
@@ -90,12 +107,12 @@ pub fn run(opts: Opts) -> Result<()> {
 }
 
 pub const BASE_EXEC_ADDR: Addr = Addr(0x400000); // whatever ld does
-pub const DEFAULT_PROGRAM_HEADER_ALIGN_THAT_LD_USES_HERE: u64 = 0x1000;
+pub const DEFAULT_PAGE_ALIGN: u64 = 0x1000;
 
 impl<'a> LinkCtxt<'a> {
     fn resolve(&mut self) -> Result<()> {
         for (elf_idx, elf) in self.elves.iter().enumerate() {
-            for e_sym in elf.symbols()? {
+            for e_sym in elf.elf.symbols()? {
                 let ty = e_sym.info.r#type();
 
                 // Undefined symbols are not a definition.
@@ -104,8 +121,10 @@ impl<'a> LinkCtxt<'a> {
                 }
 
                 let name = match ty.0 {
-                    c::STT_SECTION => elf.sh_string(elf.section_header(e_sym.shndx)?.name)?,
-                    _ => elf.string(e_sym.name)?,
+                    c::STT_SECTION => elf
+                        .elf
+                        .sh_string(elf.elf.section_header(e_sym.shndx)?.name)?,
+                    _ => elf.elf.string(e_sym.name)?,
                 };
 
                 match self.sym_defs.entry(name) {
@@ -154,7 +173,7 @@ fn write_output(opts: &Opts, text: &[u8], entry_offset_from_text: Addr) -> Resul
         fixed_entsize: None,
         content: text.to_vec(),
         // align nicely
-        addr_align: Some(NonZeroU64::new(DEFAULT_PROGRAM_HEADER_ALIGN_THAT_LD_USES_HERE).unwrap()),
+        addr_align: Some(NonZeroU64::new(DEFAULT_PAGE_ALIGN).unwrap()),
     })?;
 
     let elf_header_and_program_headers = ProgramHeader {
@@ -168,13 +187,12 @@ fn write_output(opts: &Opts, text: &[u8], entry_offset_from_text: Addr) -> Resul
         paddr: BASE_EXEC_ADDR,
         filesz: 176, // FIXME: Do not hardocde this lol
         memsz: 176,
-        align: DEFAULT_PROGRAM_HEADER_ALIGN_THAT_LD_USES_HERE,
+        align: DEFAULT_PAGE_ALIGN,
     };
 
     write.add_program_header(elf_header_and_program_headers);
 
-    let entry_addr =
-        BASE_EXEC_ADDR + DEFAULT_PROGRAM_HEADER_ALIGN_THAT_LD_USES_HERE + entry_offset_from_text;
+    let entry_addr = BASE_EXEC_ADDR + DEFAULT_PAGE_ALIGN + entry_offset_from_text;
 
     let text_program_header = ProgramHeader {
         r#type: PT_LOAD.into(),
@@ -187,7 +205,7 @@ fn write_output(opts: &Opts, text: &[u8], entry_offset_from_text: Addr) -> Resul
         paddr: entry_addr,
         filesz: text.len() as u64,
         memsz: text.len() as u64,
-        align: DEFAULT_PROGRAM_HEADER_ALIGN_THAT_LD_USES_HERE,
+        align: DEFAULT_PAGE_ALIGN,
     };
 
     write.add_program_header(text_program_header);
