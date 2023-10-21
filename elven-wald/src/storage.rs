@@ -9,23 +9,30 @@ use crate::{utils::AlignExt, ElfFile, FileId, DEFAULT_PAGE_ALIGN};
 
 #[derive(Debug)]
 pub struct Allocation {
-    file: FileId,
-    section: BString,
-    size: u64,
-    align: u64,
+    pub file: FileId,
+    pub section: BString,
+    pub size: u64,
+    pub align: u64,
 }
 
 #[derive(Debug)]
 pub struct SegmentPart {
-    base: Addr,
-    file: FileId,
-    section: BString,
-    size: u64,
+    pub pad_from_prev: u64,
+    pub base: Addr,
+    pub align: u64,
+    pub file: FileId,
+    pub size: u64,
 }
 
 #[derive(Debug)]
 pub struct StorageAllocation {
-    segment_parts: Vec<SegmentPart>,
+    pub sections: Vec<AllocatedSection>,
+}
+
+#[derive(Debug)]
+pub struct AllocatedSection {
+    pub name: BString,
+    pub parts: Vec<SegmentPart>,
 }
 
 pub fn allocate_storage<'a>(base_addr: Addr, files: &[ElfFile<'a>]) -> Result<StorageAllocation> {
@@ -54,23 +61,34 @@ pub fn allocate_storage<'a>(base_addr: Addr, files: &[ElfFile<'a>]) -> Result<St
     debug!(?allocs, "Allocation pass one completed");
 
     let mut current_addr = base_addr;
-    let mut segment_parts = Vec::new();
+    let mut section_parts = Vec::new();
     for section in allocs {
+        let mut segment_parts = Vec::new();
+
         current_addr = current_addr.align_up(DEFAULT_PAGE_ALIGN);
         for alloc in section.1 {
             let align = alloc.align;
             let addr = current_addr.align_up(align);
+            let pad = addr.u64() - current_addr.u64();
 
             current_addr = addr + alloc.size;
 
             segment_parts.push(SegmentPart {
+                pad_from_prev: pad,
                 base: addr,
+                align: align,
                 file: alloc.file,
                 size: alloc.size,
-                section: section.0.to_owned(),
             });
         }
+
+        section_parts.push(AllocatedSection {
+            name: section.0.to_owned(),
+            parts: segment_parts,
+        })
     }
 
-    Ok(StorageAllocation { segment_parts })
+    Ok(StorageAllocation {
+        sections: section_parts,
+    })
 }

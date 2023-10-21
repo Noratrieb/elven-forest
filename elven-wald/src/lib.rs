@@ -18,6 +18,7 @@ use std::{
     collections::{hash_map::Entry, HashMap},
     fs::{self, File},
     io::{BufWriter, Write},
+    iter,
     num::NonZeroU64,
     path::PathBuf,
 };
@@ -90,7 +91,42 @@ pub fn run(opts: Opts) -> Result<()> {
     let storage =
         storage::allocate_storage(BASE_EXEC_ADDR, &cx.elves).context("while allocating storage")?;
 
-    dbg!(storage);
+    dbg!(&storage);
+
+    let mut writer = create_elf();
+
+    for section in &storage.sections {
+        let exec = if section.name == b"text".as_slice() {
+            ShFlags::SHF_EXECINSTR
+        } else {
+            ShFlags::empty()
+        };
+        let mut content = Vec::new();
+
+        for part in &section.parts {
+            let elf = cx.elves[part.file.0].elf;
+            let shdr = elf.section_header_by_name(&section.name)?;
+            let data = elf.section_content(shdr)?;
+            content.extend(iter::repeat(0).take(part.pad_from_prev.try_into().unwrap()));
+            content.extend(data);
+        }
+
+        let name = writer.add_sh_string(&section.name);
+        writer.add_section(Section {
+            name,
+            r#type: ShType(SHT_PROGBITS),
+            flags: ShFlags::SHF_ALLOC | exec,
+            fixed_entsize: None,
+            addr_align: NonZeroU64::new(
+                section
+                    .parts
+                    .first()
+                    .map(|p| p.align)
+                    .unwrap_or(DEFAULT_PAGE_ALIGN),
+            ),
+            content,
+        })?;
+    }
 
     cx.resolve()?;
 
@@ -146,7 +182,7 @@ impl<'a> LinkCtxt<'a> {
     }
 }
 
-fn write_output(opts: &Opts, text: &[u8], entry_offset_from_text: Addr) -> Result<()> {
+fn create_elf() -> ElfWriter {
     let ident = ElfIdent {
         magic: *c::ELFMAG,
         class: c::Class(c::ELFCLASS64),
@@ -163,7 +199,11 @@ fn write_output(opts: &Opts, text: &[u8], entry_offset_from_text: Addr) -> Resul
         machine: c::Machine(c::EM_X86_64),
     };
 
-    let mut write = ElfWriter::new(header);
+    ElfWriter::new(header)
+}
+
+fn write_output(opts: &Opts, text: &[u8], entry_offset_from_text: Addr) -> Result<()> {
+    let mut write = create_elf();
 
     let text_name = write.add_sh_string(b".text");
     let text_section = write.add_section(Section {
