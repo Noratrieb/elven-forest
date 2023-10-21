@@ -1,5 +1,3 @@
-use std::ops::Add;
-
 use anyhow::Result;
 use bstr::{BStr, BString};
 use elven_parser::{read::ElfReadError, Addr};

@@ -57,6 +57,14 @@ macro_rules! const_group_with_fmt {
             }
         }
 
+        impl PartialEq<$struct_name> for $struct_name {
+            fn eq(&self, other: &$struct_name) -> bool {
+               self.0 == other.0
+            }
+        }
+
+        impl Eq for $struct_name {}
+
         impl PartialOrd<$ty> for $struct_name {
             fn partial_cmp(&self, other: &$ty) -> Option<std::cmp::Ordering> {
                 self.0.partial_cmp(other)

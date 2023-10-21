@@ -15,13 +15,20 @@ use elven_parser::{
 };
 use memmap2::Mmap;
 use std::{
+    cell::RefCell,
     collections::{hash_map::Entry, HashMap},
+    fmt::Debug,
     fs::{self, File},
     io::{BufWriter, Write},
     iter,
     num::NonZeroU64,
-    path::PathBuf,
+    path::{Path, PathBuf},
 };
+use storage::StorageAllocation;
+
+thread_local! {
+    static ELF_PATHS: RefCell<Vec<PathBuf>> = RefCell::new(Vec::new());
+}
 
 #[derive(Debug, Clone, Parser)]
 pub struct Opts {
@@ -30,8 +37,24 @@ pub struct Opts {
     pub objs: Vec<PathBuf>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 struct FileId(usize);
+
+impl Debug for FileId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        ELF_PATHS.with(|p| {
+            let paths = p.borrow();
+            let name = &paths[self.0];
+            write!(f, "{}#{{{}}}", self.0, name.display(),)
+        })
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SectionId {
+    file: FileId,
+    section: SectionIdx,
+}
 
 struct ElfFile<'a> {
     id: FileId,
@@ -39,19 +62,27 @@ struct ElfFile<'a> {
 }
 
 #[derive(Debug)]
-struct SymDef<'a> {
-    _name: &'a BStr,
-    defined_in: u32,
-    /// `shndx` from ELF
-    _refers_to_section: SectionIdx,
+struct Symbol<'a> {
+    name: &'a BStr,
+    definition: Option<SymbolDefinition>,
+}
+
+#[derive(Debug)]
+struct SymbolDefinition {
+    location: SectionId,
+    value: Addr,
+    size: u64,
 }
 
 struct LinkCtxt<'a> {
     elves: Vec<ElfFile<'a>>,
-    sym_defs: HashMap<&'a BStr, SymDef<'a>>,
+    sym_defs: HashMap<&'a BStr, Symbol<'a>>,
+    storage: StorageAllocation,
 }
 
 pub fn run(opts: Opts) -> Result<()> {
+    ELF_PATHS.set(opts.objs.clone());
+
     let mmaps = opts
         .objs
         .iter()
@@ -83,19 +114,22 @@ pub fn run(opts: Opts) -> Result<()> {
         })
         .collect::<Result<Vec<_>, anyhow::Error>>()?;
 
+    let storage =
+        storage::allocate_storage(BASE_EXEC_ADDR, &elves).context("while allocating storage")?;
+
     let mut cx = LinkCtxt {
         elves,
         sym_defs: HashMap::new(),
+        storage,
     };
 
-    let storage =
-        storage::allocate_storage(BASE_EXEC_ADDR, &cx.elves).context("while allocating storage")?;
+    dbg!(&cx.storage);
 
-    dbg!(&storage);
+    cx.sym_first_pass()?;
 
     let mut writer = create_elf();
 
-    for section in &storage.sections {
+    for section in &cx.storage.sections {
         let exec = if section.name == b"text".as_slice() {
             ShFlags::SHF_EXECINSTR
         } else {
@@ -128,7 +162,7 @@ pub fn run(opts: Opts) -> Result<()> {
         })?;
     }
 
-    cx.resolve()?;
+    write_elf_to_file(writer, &opts.output)?;
 
     dbg!(cx.sym_defs);
 
@@ -146,33 +180,41 @@ pub const BASE_EXEC_ADDR: Addr = Addr(0x400000); // whatever ld does
 pub const DEFAULT_PAGE_ALIGN: u64 = 0x1000;
 
 impl<'a> LinkCtxt<'a> {
-    fn resolve(&mut self) -> Result<()> {
+    fn sym_first_pass(&mut self) -> Result<()> {
         for (elf_idx, elf) in self.elves.iter().enumerate() {
             for e_sym in elf.elf.symbols()? {
                 let ty = e_sym.info.r#type();
 
-                // Undefined symbols are not a definition.
-                if e_sym.shndx == SHN_UNDEF {
+                if ty.0 == c::STT_SECTION {
                     continue;
                 }
 
-                let name = match ty.0 {
-                    c::STT_SECTION => elf
-                        .elf
-                        .sh_string(elf.elf.section_header(e_sym.shndx)?.name)?,
-                    _ => elf.elf.string(e_sym.name)?,
+                let name = elf.elf.string(e_sym.name)?;
+
+                let definition = if e_sym.shndx == SHN_UNDEF {
+                    None
+                } else {
+                    Some(SymbolDefinition {
+                        location: SectionId {
+                            file: FileId(elf_idx),
+                            section: e_sym.shndx,
+                        },
+                        value: e_sym.value,
+                        size: e_sym.size,
+                    })
                 };
 
                 match self.sym_defs.entry(name) {
-                    Entry::Occupied(entry) => {
-                        bail!("duplicate symbol {name}. Already defined in {}, duplicate definition in {}", entry.get().defined_in, elf_idx);
+                    Entry::Occupied(mut entry) => {
+                        match (&mut entry.get_mut().definition, definition) {
+                            (Some(_), Some(_)) => bail!("duplicate definition for symbol {name}"),
+                            (new @ None, def @ Some(_)) => *new = def,
+                            (Some(_), None) => {}
+                            (None, None) => {}
+                        }
                     }
                     Entry::Vacant(entry) => {
-                        entry.insert(SymDef {
-                            _name: name,
-                            defined_in: elf_idx as u32,
-                            _refers_to_section: e_sym.shndx,
-                        });
+                        entry.insert(Symbol { name, definition });
                     }
                 }
             }
@@ -252,14 +294,18 @@ fn write_output(opts: &Opts, text: &[u8], entry_offset_from_text: Addr) -> Resul
 
     write.set_entry(entry_addr);
 
-    let output = write.write().context("writing output file")?;
-
-    let mut output_file = fs::File::create(&opts.output).context("creating ./a.out")?;
-    BufWriter::new(&mut output_file).write_all(&output)?;
-
-    make_file_executable(&output_file)?;
+    write_elf_to_file(write, &opts.output)?;
 
     Ok(())
+}
+
+fn write_elf_to_file(elf: ElfWriter, path: &Path) -> Result<()> {
+    let output = elf.write().context("writing output file")?;
+
+    let mut output_file = fs::File::create(path).context("creating ./a.out")?;
+    BufWriter::new(&mut output_file).write_all(&output)?;
+
+    make_file_executable(&output_file)
 }
 
 fn make_file_executable(file: &File) -> Result<()> {
