@@ -5,7 +5,7 @@
 use crate::{
     consts::{self as c, DynamicTag, ShType},
     idx::{define_idx, ElfIndexExt, ToIdxUsize},
-    Addr, Offset, write::Section,
+    Addr, Offset,
 };
 use bstr::BStr;
 

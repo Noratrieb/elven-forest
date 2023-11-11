@@ -144,6 +144,7 @@ pub fn run(opts: Opts) -> Result<()> {
             let data = elf.section_content(shdr)?;
             content.extend(iter::repeat(0).take(part.pad_from_prev.try_into().unwrap()));
             content.extend(data);
+            // TODO: relocations here
         }
 
         let name = writer.add_sh_string(&section.name);
